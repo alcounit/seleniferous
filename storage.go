@@ -27,6 +27,7 @@ func (s *storage) get(sessionID string) (*session, bool) {
 	s.Lock()
 	defer s.Unlock()
 	platform, ok := s.sessions[sessionID]
+
 	return platform, ok
 }
 
@@ -39,5 +40,6 @@ func (s *storage) put(sessionID string, platform *session) {
 func (s *storage) isEmpty() bool {
 	s.Lock()
 	defer s.Unlock()
+	
 	return len(s.sessions) == 0
 }
