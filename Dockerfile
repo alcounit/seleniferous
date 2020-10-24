@@ -1,7 +1,23 @@
-FROM alpine:3.12
+FROM golang:alpine AS builder
 
-RUN apk add -U ca-certificates tzdata mailcap && rm -Rf /var/cache/apk/*
-COPY seleniferous /usr/bin
+RUN apk add --quiet --no-cache build-base git
 
-EXPOSE 4444
-ENTRYPOINT ["/usr/bin/seleniferous", "-namespace", "selenosis"]
+WORKDIR /src
+
+ENV GO111MODULE=on
+
+ADD go.* ./
+
+RUN go mod download
+
+ADD . .
+
+RUN cd cmd/seleniferous && \
+    go install -ldflags="-linkmode external -extldflags '-static' -s -w"
+
+
+FROM scratch
+
+COPY --from=builder /go/bin/* /usr/bin
+
+ENTRYPOINT ["/usr/bin/seleniferous"]

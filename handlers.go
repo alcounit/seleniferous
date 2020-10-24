@@ -39,21 +39,19 @@ type req struct {
 	*http.Request
 }
 
-func (r req) buildURL(hostname, reqHost, sessionID string) *sess {
-	_, port, _ := net.SplitHostPort(reqHost)
+func (r req) buildURL(hostPort, sessionID string) *sess {
+	host, port, _ := net.SplitHostPort(hostPort)
 
 	return &sess{
-		url: fmt.Sprintf("http://%s/wd/hub/session/%s", net.JoinHostPort(hostname, port), sessionID),
+		url: fmt.Sprintf("http://%s/wd/hub/session/%s", net.JoinHostPort(host, port), sessionID),
 		id:  sessionID,
 	}
 }
 
-func (s sess) delete(logger *logrus.Entry) {
+func (s sess) delete() error {
 	r, err := http.NewRequest(http.MethodDelete, s.url, nil)
 	if err != nil {
-		logger.Warnf("delete request failed: %s", s.id)
-		
-		return
+		return fmt.Errorf("delete request failed: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -65,14 +63,14 @@ func (s sess) delete(logger *logrus.Entry) {
 	}
 
 	if err == nil && resp.StatusCode == http.StatusOK {
-		return
+		return nil
 	}
 
 	if err != nil {
-		logger.Warnf("delete request failed: %s", s.id)
-	} else {
-		logger.Warnf("delete request failed: %s, %s", s.id, resp.Status)
+		return fmt.Errorf("delete request failed: %v", err)
 	}
+
+	return nil
 }
 
 //HandleSession ...
@@ -229,7 +227,10 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 				} else {
 					sess.OnTimeout = onTimeout(app.iddleTimeout, func() {
 						logger.Infof("session timed out: %s, after %.2fs", id, app.iddleTimeout.Seconds())
-						req{r}.buildURL(app.hostname, r.Host, id).delete(logger)
+						err := req{r}.buildURL(r.Host, id).delete()
+						if err != nil {
+							logger.Warnf("session %s delete request failed: %v", id, err)
+						}
 					})
 
 					if r.Body != nil {
