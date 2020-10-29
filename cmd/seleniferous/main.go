@@ -22,11 +22,12 @@ import (
 func command() *cobra.Command {
 
 	var (
-		listhenPort  string
-		browserPort  string
-		proxyPath    string
-		iddleTimeout time.Duration
-		namespace    string
+		listhenPort     string
+		browserPort     string
+		proxyPath       string
+		namespace       string
+		iddleTimeout    time.Duration
+		shutdownTimeout time.Duration
 	)
 
 	cmd := &cobra.Command{
@@ -34,7 +35,7 @@ func command() *cobra.Command {
 		Short: "seleniferous is a sidecar proxy for selenosis",
 		Run: func(cmd *cobra.Command, args []string) {
 			var err error
-			context := context.Background()
+			ctx := context.Background()
 
 			logger := logrus.New()
 			logger.Formatter = &logrus.JSONFormatter{}
@@ -51,7 +52,7 @@ func command() *cobra.Command {
 				logger.Fatalf("failed to build kubernetes client: %v", err)
 			}
 
-			_, err = client.CoreV1().Namespaces().Get(context, namespace, metav1.GetOptions{})
+			_, err = client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 			if err != nil {
 				logger.Fatalf("failed to get namespace: %s: %v", namespace, err)
 			}
@@ -91,6 +92,13 @@ func command() *cobra.Command {
 			case <-stop:
 				logger.Warn("stopping seleniferous")
 			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			defer cancel()
+			
+			if err := srv.Shutdown(ctx); err != nil {
+				logger.Fatalf("faled to stop", err)
+			}
 		},
 	}
 
@@ -99,6 +107,7 @@ func command() *cobra.Command {
 	cmd.Flags().StringVar(&proxyPath, "proxy-default-path", "/session", "path used by handler")
 	cmd.Flags().DurationVar(&iddleTimeout, "iddle-timeout", 120*time.Second, "time in seconds for iddling session")
 	cmd.Flags().StringVar(&namespace, "namespace", "selenosis", "kubernetes namespace")
+	cmd.Flags().DurationVar(&shutdownTimeout, "graceful-shutdown-timeout", 300*time.Second, "time in seconds  gracefull shutdown timeout")
 
 	cmd.Flags().SortFlags = false
 
