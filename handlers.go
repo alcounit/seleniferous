@@ -224,6 +224,7 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 
 				if r.Method == http.MethodDelete && len(fragments) == 5 {
 					cancel = sess.CancelFunc
+					logger.Warnf("session %s delete request", id)
 				} else {
 					sess.OnTimeout = onTimeout(app.iddleTimeout, func() {
 						logger.Infof("session timed out: %s, after %.2fs", id, app.iddleTimeout.Seconds())
