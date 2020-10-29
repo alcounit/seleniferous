@@ -60,13 +60,14 @@ func command() *cobra.Command {
 			logger.Info("kubernetes client created")
 
 			app := seleniferous.New(&seleniferous.Config{
-				BrowserPort:  browserPort,
-				ProxyPath:    proxyPath,
-				Hostname:     hostname,
-				Namespace:    namespace,
-				IddleTimeout: iddleTimeout,
-				Logger:       logger,
-				Client:       client,
+				BrowserPort:     browserPort,
+				ProxyPath:       proxyPath,
+				Hostname:        hostname,
+				Namespace:       namespace,
+				IddleTimeout:    iddleTimeout,
+				ShutdownTimeout: shutdownTimeout,
+				Logger:          logger,
+				Client:          client,
 			})
 
 			router := mux.NewRouter()
@@ -95,7 +96,7 @@ func command() *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer cancel()
-			
+
 			if err := srv.Shutdown(ctx); err != nil {
 				logger.Fatalf("faled to stop", err)
 			}
