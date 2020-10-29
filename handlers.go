@@ -105,7 +105,7 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 	(&httputil.ReverseProxy{
 		Director: func(r *http.Request) {
 			r.URL.Scheme = "http"
-			r.URL.Host, r.URL.Path = app.hostname, app.proxyPath
+			r.URL.Host, r.URL.Path = net.JoinHostPort(app.hostname, app.browserPort), app.proxyPath
 
 			go func() {
 				<-r.Context().Done()
@@ -158,7 +158,7 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 					service := &session{
 						URL: &url.URL{
 							Scheme: "http",
-							Host:   app.hostname,
+							Host:   net.JoinHostPort(app.hostname, app.browserPort),
 							Path:   path.Join(app.proxyPath, sessionId),
 						},
 						ID: sessionId,
@@ -206,7 +206,7 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		"request_id":     uuid.New(),
 		"request_method": r.Method,
 		"req_path":       r.URL.Path,
-		"selenosis_id":   r.Header.Get("X-Forwarded-Selenosis"),
+		"request_by":     r.Header.Get("X-Forwarded-Selenosis"),
 	})
 
 	(&httputil.ReverseProxy{

@@ -9,6 +9,7 @@ import (
 
 //Config basic config
 type Config struct {
+	BrowserPort  string
 	ProxyPath    string
 	Hostname     string
 	Namespace    string
@@ -19,6 +20,7 @@ type Config struct {
 
 //App ...
 type App struct {
+	browserPort  string
 	proxyPath    string
 	hostname     string
 	namespace    string
@@ -31,6 +33,7 @@ type App struct {
 //New ...
 func New(conf *Config) *App {
 	return &App{
+		browserPort:  conf.BrowserPort,
 		proxyPath:    conf.ProxyPath,
 		hostname:     conf.Hostname,
 		namespace:    conf.Namespace,

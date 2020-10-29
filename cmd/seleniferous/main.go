@@ -23,6 +23,7 @@ func command() *cobra.Command {
 
 	var (
 		listhenPort  string
+		browserPort  string
 		proxyPath    string
 		iddleTimeout time.Duration
 		namespace    string
@@ -58,6 +59,7 @@ func command() *cobra.Command {
 			logger.Info("kubernetes client created")
 
 			app := seleniferous.New(&seleniferous.Config{
+				BrowserPort:  browserPort,
 				ProxyPath:    proxyPath,
 				Hostname:     hostname,
 				Namespace:    namespace,
@@ -93,6 +95,7 @@ func command() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&listhenPort, "listhen-port", "4445", "port to use for incomming requests")
+	cmd.Flags().StringVar(&browserPort, "browser-port", "4444", "browser port")
 	cmd.Flags().StringVar(&proxyPath, "proxy-default-path", "/session", "path used by handler")
 	cmd.Flags().DurationVar(&iddleTimeout, "iddle-timeout", 120*time.Second, "time in seconds for iddling session")
 	cmd.Flags().StringVar(&namespace, "namespace", "selenosis", "kubernetes namespace")

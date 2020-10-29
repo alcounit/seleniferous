@@ -18,6 +18,6 @@ RUN cd cmd/seleniferous && \
 
 FROM scratch
 
-COPY --from=builder /go/bin/* /usr/bin
+COPY --from=builder /go/bin/seleniferous /
 
-ENTRYPOINT ["/usr/bin/seleniferous"]
+ENTRYPOINT ["/seleniferous"]
