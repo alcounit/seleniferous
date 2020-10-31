@@ -73,7 +73,9 @@ func command() *cobra.Command {
 			router := mux.NewRouter()
 			router.HandleFunc("/wd/hub/session", app.HandleSession).Methods(http.MethodPost)
 			router.PathPrefix("/wd/hub/session/{sessionId}").HandlerFunc(app.HandleProxy)
-
+			router.PathPrefix("/devtools/{sessionId}").HandlerFunc(app.HandleDevTools)
+			router.PathPrefix("/download/{sessionId}").HandlerFunc(app.HandleDownload)
+			router.PathPrefix("/clipboard/{sessionId}").HandlerFunc(app.HandleClipboard)
 			srv := &http.Server{
 				Addr:    net.JoinHostPort("", listhenPort),
 				Handler: router,

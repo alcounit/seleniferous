@@ -28,6 +28,13 @@ var (
 			return http.ErrUseLastResponse
 		},
 	}
+	ports = struct {
+		Devtools, Fileserver, Clipboard string
+	}{
+		Devtools:   "7070",
+		Fileserver: "8080",
+		Clipboard:  "9090",
+	}
 )
 
 type sess struct {
@@ -77,10 +84,9 @@ func (s sess) delete() error {
 func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 
 	logger := app.logger.WithFields(logrus.Fields{
-		"request_id":     uuid.New(),
-		"request_method": r.Method,
-		"req_path":       r.URL.Path,
-		"request_by":     r.Header.Get("X-Forwarded-Selenosis"),
+		"request_id": uuid.New(),
+		"request":    fmt.Sprintf("%s %s", r.Method, r.URL.Path),
+		"request_by": r.Header.Get("X-Forwarded-Selenosis"),
 	})
 
 	done := make(chan func())
@@ -203,83 +209,136 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	id := vars["sessionId"]
 
 	logger := app.logger.WithFields(logrus.Fields{
-		"request_id":     uuid.New(),
-		"request_method": r.Method,
-		"req_path":       r.URL.Path,
-		"request_by":     r.Header.Get("X-Forwarded-Selenosis"),
+		"request_id": uuid.New(),
+		"request":    fmt.Sprintf("%s %s", r.Method, r.URL.Path),
+		"request_by": r.Header.Get("X-Forwarded-Selenosis"),
 	})
+	_, ok := app.bucket.get(id)
 
-	(&httputil.ReverseProxy{
-		Director: func(r *http.Request) {
-			r.URL.Scheme = "http"
-			sess, ok := app.bucket.get(id)
-			if ok {
-				app.bucket.Lock()
-				defer app.bucket.Unlock()
-				select {
-				case <-sess.OnTimeout:
-				default:
-					close(sess.OnTimeout)
-				}
+	if ok {
+		(&httputil.ReverseProxy{
+			Director: func(r *http.Request) {
+				r.URL.Scheme = "http"
+				sess, ok := app.bucket.get(id)
+				if ok {
+					app.bucket.Lock()
+					defer app.bucket.Unlock()
+					select {
+					case <-sess.OnTimeout:
+					default:
+						close(sess.OnTimeout)
+					}
 
-				if r.Method == http.MethodDelete && len(fragments) == 5 {
-					cancel = sess.CancelFunc
-					logger.Warnf("session %s delete request", id)
-				} else {
-					sess.OnTimeout = onTimeout(app.iddleTimeout, func() {
-						logger.Infof("session timed out: %s, after %.2fs", id, app.iddleTimeout.Seconds())
-						err := req{r}.buildURL(r.Host, id).delete()
-						if err != nil {
-							logger.Warnf("session %s delete request failed: %v", id, err)
-						}
-					})
-
-					if r.Body != nil {
-						if body, err := ioutil.ReadAll(r.Body); err == nil {
-							r.Body.Close()
-							var msg map[string]interface{}
-							if err := json.Unmarshal(body, &msg); err == nil {
-								if _, ok := msg["sessionId"].(string); ok {
-									msg["sessionId"] = sess.ID
-									body, _ = json.Marshal(msg)
-									r.Header["Content-Length"] = []string{fmt.Sprint(len(body))}
-									r.ContentLength = int64(len(body))
-								}
+					if r.Method == http.MethodDelete && len(fragments) == 5 {
+						cancel = sess.CancelFunc
+						logger.Warnf("session %s delete request", id)
+					} else {
+						sess.OnTimeout = onTimeout(app.iddleTimeout, func() {
+							logger.Infof("session timed out: %s, after %.2fs", id, app.iddleTimeout.Seconds())
+							err := req{r}.buildURL(r.Host, id).delete()
+							if err != nil {
+								logger.Warnf("session %s delete request failed: %v", id, err)
 							}
-							r.Body = ioutil.NopCloser(bytes.NewReader(body))
+						})
+
+						if r.Body != nil {
+							if body, err := ioutil.ReadAll(r.Body); err == nil {
+								r.Body.Close()
+								var msg map[string]interface{}
+								if err := json.Unmarshal(body, &msg); err == nil {
+									if _, ok := msg["sessionId"].(string); ok {
+										msg["sessionId"] = sess.ID
+										body, _ = json.Marshal(msg)
+										r.Header["Content-Length"] = []string{fmt.Sprint(len(body))}
+										r.ContentLength = int64(len(body))
+									}
+								}
+								r.Body = ioutil.NopCloser(bytes.NewReader(body))
+							}
 						}
 					}
+					r.URL.Host, r.URL.Path = sess.URL.Host, path.Clean(path.Join(sess.URL.Path, strings.Join(fragments[5:], "/")))
+					logger.Info("proxy session")
+					return
 				}
-				r.URL.Host, r.URL.Path = sess.URL.Host, path.Clean(path.Join(sess.URL.Path, strings.Join(fragments[5:], "/")))
-				logger.Infof("request: %s: %s", r.Method, r.URL.Path)
-				return
-			}
-			logger.Warnf("unknown session: %s", id)
-			r.URL.Path = "/error"
-		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			w.WriteHeader(http.StatusBadGateway)
-		},
-		ModifyResponse: func(r *http.Response) error {
-			var err error
-			if body, err := ioutil.ReadAll(r.Body); err == nil {
-				r.Body.Close()
-				var msg map[string]interface{}
-				if err := json.Unmarshal(body, &msg); err == nil {
-					if _, ok := msg["sessionId"].(string); ok {
-						msg["sessionId"] = id
-						body, _ = json.Marshal(msg)
-						r.Header["Content-Length"] = []string{fmt.Sprint(len(body))}
-						r.ContentLength = int64(len(body))
+				logger.Warnf("unknown session: %s", id)
+				r.URL.Path = "/error"
+			},
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+				w.WriteHeader(http.StatusBadGateway)
+			},
+			ModifyResponse: func(r *http.Response) error {
+				var err error
+				if body, err := ioutil.ReadAll(r.Body); err == nil {
+					r.Body.Close()
+					var msg map[string]interface{}
+					if err := json.Unmarshal(body, &msg); err == nil {
+						if _, ok := msg["sessionId"].(string); ok {
+							msg["sessionId"] = id
+							body, _ = json.Marshal(msg)
+							r.Header["Content-Length"] = []string{fmt.Sprint(len(body))}
+							r.ContentLength = int64(len(body))
+						}
+						r.Body = ioutil.NopCloser(bytes.NewReader(body))
+						return nil
 					}
-					r.Body = ioutil.NopCloser(bytes.NewReader(body))
-					return nil
+					return err
 				}
 				return err
-			}
-			return err
-		},
-	}).ServeHTTP(w, r)
+			},
+		}).ServeHTTP(w, r)
+	} else {
+		jSONError(w, fmt.Sprintf("Unknown session %s", id), http.StatusBadRequest)
+		logger.Errorf("unknown session: %s", id)
+	}
+}
+
+//HandleDevTools ...
+func (app *App) HandleDevTools(w http.ResponseWriter, r *http.Request) {
+	app.proxy(w, r, ports.Devtools)
+}
+
+//HandleDownload ...
+func (app *App) HandleDownload(w http.ResponseWriter, r *http.Request) {
+	app.proxy(w, r, ports.Devtools)
+}
+
+//HandleClipboard ..
+func (app *App) HandleClipboard(w http.ResponseWriter, r *http.Request) {
+	app.proxy(w, r, ports.Devtools)
+}
+
+func (app *App) proxy(w http.ResponseWriter, r *http.Request, port string) {
+
+	vars := mux.Vars(r)
+	id := vars["sessionId"]
+	logger := app.logger.WithFields(logrus.Fields{
+		"request_id": uuid.New(),
+		"request":    fmt.Sprintf("%s %s", r.Method, r.URL.Path),
+		"request_by": r.Header.Get("X-Forwarded-Selenosis"),
+	})
+
+	fragments := strings.Split(r.URL.Path, "/")
+	remainingPath := "/" + strings.Join(fragments[3:], "/")
+	_, ok := app.bucket.get(id)
+
+	if ok {
+		(&httputil.ReverseProxy{
+			Director: func(r *http.Request) {
+				r.URL.Scheme = "http"
+				r.URL.Host = net.JoinHostPort(app.hostname, port)
+				r.URL.Path = remainingPath
+				logger.Info("proxying %s", fragments[1])
+			},
+			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+				logger.Errorf("proxying %s error: %v", fragments[1], err)
+				w.WriteHeader(http.StatusBadGateway)
+			},
+		}).ServeHTTP(w, r)
+	} else {
+		jSONError(w, fmt.Sprintf("Unknown session %s", id), http.StatusBadRequest)
+		logger.Errorf("unknown session: %s", id)
+	}
 }
 
 func onTimeout(t time.Duration, f func()) chan struct{} {
@@ -293,4 +352,17 @@ func onTimeout(t time.Duration, f func()) chan struct{} {
 	}(cancel)
 
 	return cancel
+}
+
+func jSONError(w http.ResponseWriter, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(
+		map[string]interface{}{
+			"value": map[string]string{
+				"message": message,
+			},
+			"code": statusCode,
+		},
+	)
 }
