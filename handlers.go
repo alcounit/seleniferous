@@ -328,7 +328,7 @@ func (app *App) proxy(w http.ResponseWriter, r *http.Request, port string) {
 				r.URL.Scheme = "http"
 				r.URL.Host = net.JoinHostPort(app.hostname, port)
 				r.URL.Path = remainingPath
-				logger.Info("proxying %s", fragments[1])
+				logger.Infof("proxying %s", fragments[1])
 			},
 			ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 				logger.Errorf("proxying %s error: %v", fragments[1], err)
