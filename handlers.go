@@ -225,6 +225,7 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 					defer app.bucket.Unlock()
 					select {
 					case <-sess.OnTimeout:
+						logger.Warnf("session %s timed out", id)
 					default:
 						close(sess.OnTimeout)
 					}

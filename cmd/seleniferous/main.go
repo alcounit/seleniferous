@@ -28,6 +28,7 @@ func command() *cobra.Command {
 		namespace       string
 		iddleTimeout    time.Duration
 		shutdownTimeout time.Duration
+		shuttingDown    bool
 	)
 
 	cmd := &cobra.Command{
@@ -76,6 +77,12 @@ func command() *cobra.Command {
 			router.PathPrefix("/devtools/{sessionId}").HandlerFunc(app.HandleDevTools)
 			router.PathPrefix("/download/{sessionId}").HandlerFunc(app.HandleDownload)
 			router.PathPrefix("/clipboard/{sessionId}").HandlerFunc(app.HandleClipboard)
+			router.PathPrefix("/status").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if shuttingDown {
+					w.WriteHeader(http.StatusBadGateway)
+				}
+				w.WriteHeader(http.StatusOK)
+			})
 			srv := &http.Server{
 				Addr:    net.JoinHostPort("", listhenPort),
 				Handler: router,
@@ -93,6 +100,7 @@ func command() *cobra.Command {
 			case err := <-e:
 				logger.Fatalf("failed to start: %v", err)
 			case <-stop:
+				shuttingDown = true
 				logger.Warn("stopping seleniferous")
 			}
 
@@ -110,7 +118,7 @@ func command() *cobra.Command {
 	cmd.Flags().StringVar(&proxyPath, "proxy-default-path", "/session", "path used by handler")
 	cmd.Flags().DurationVar(&iddleTimeout, "iddle-timeout", 120*time.Second, "time in seconds for iddling session")
 	cmd.Flags().StringVar(&namespace, "namespace", "selenosis", "kubernetes namespace")
-	cmd.Flags().DurationVar(&shutdownTimeout, "graceful-shutdown-timeout", 300*time.Second, "time in seconds  gracefull shutdown timeout")
+	cmd.Flags().DurationVar(&shutdownTimeout, "graceful-shutdown-timeout", 15*time.Second, "time in seconds  gracefull shutdown timeout")
 
 	cmd.Flags().SortFlags = false
 
