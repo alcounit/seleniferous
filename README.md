@@ -1,5 +1,5 @@
 # seleniferous
-sidecar proxy container for selenosis<br/>
+seleniferous proxies incoming connections to browser container. It is responsible for freeing resources when a session deleted or an idle timeout occurs.
 
 ## Overview
 ### Available flags
@@ -26,6 +26,3 @@ Flags:
 | HTTP    | /wd/hub/session              |
 | HTTP    | /wd/hub/session/{sessionId}/ |
 | HTTP    | /status                      |
-
-### Features
-seleniferous proxies incoming connections to browser container. It is responsible for freeing resources when a session deleted or an idle timeout occurs.
