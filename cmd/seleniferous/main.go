@@ -36,8 +36,6 @@ func command() *cobra.Command {
 		Short: "seleniferous is a sidecar proxy for selenosis",
 		Run: func(cmd *cobra.Command, args []string) {
 			var err error
-			ctx := context.Background()
-
 			logger := logrus.New()
 			logger.Formatter = &logrus.JSONFormatter{}
 
@@ -53,6 +51,7 @@ func command() *cobra.Command {
 				logger.Fatalf("failed to build kubernetes client: %v", err)
 			}
 
+			ctx := context.Background()
 			_, err = client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
 			if err != nil {
 				logger.Fatalf("failed to get namespace: %s: %v", namespace, err)
