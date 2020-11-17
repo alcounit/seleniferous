@@ -13,7 +13,7 @@ RUN go mod download
 ADD . .
 
 RUN cd cmd/seleniferous && \
-    go install -ldflags="-linkmode external -extldflags '-static' -s -w"
+    go install -ldflags="-X main.buildVersion=$BUILD_VERSION -linkmode external -extldflags '-static' -s -w"
 
 
 FROM scratch

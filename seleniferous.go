@@ -15,6 +15,7 @@ type Config struct {
 	Namespace       string
 	IddleTimeout    time.Duration
 	ShutdownTimeout time.Duration
+	Storage         *Storage
 	Logger          *logrus.Logger
 	Client          *kubernetes.Clientset
 }
@@ -27,7 +28,7 @@ type App struct {
 	namespace       string
 	iddleTimeout    time.Duration
 	shutdownTimeout time.Duration
-	bucket          *storage
+	bucket          *Storage
 	logger          *logrus.Logger
 	client          *kubernetes.Clientset
 }
@@ -41,7 +42,7 @@ func New(conf *Config) *App {
 		namespace:       conf.Namespace,
 		iddleTimeout:    conf.IddleTimeout,
 		shutdownTimeout: conf.ShutdownTimeout,
-		bucket:          newStorage(),
+		bucket:          conf.Storage,
 		logger:          conf.Logger,
 		client:          conf.Client,
 	}

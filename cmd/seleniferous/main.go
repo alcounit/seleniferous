@@ -17,7 +17,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/pointer"
 )
+
+var buildVersion = "HEAD"
 
 func command() *cobra.Command {
 
@@ -44,7 +47,7 @@ func command() *cobra.Command {
 				logger.Fatalf("can't get container hostname: %v", err)
 			}
 
-			logger.Infof("starting seleniferous")
+			logger.Infof("starting seleniferous %s", buildVersion)
 
 			client, err := buildClusterClient()
 			if err != nil {
@@ -59,6 +62,8 @@ func command() *cobra.Command {
 
 			logger.Info("kubernetes client created")
 
+			storage := seleniferous.NewStorage()
+
 			app := seleniferous.New(&seleniferous.Config{
 				BrowserPort:     browserPort,
 				ProxyPath:       proxyPath,
@@ -66,6 +71,7 @@ func command() *cobra.Command {
 				Namespace:       namespace,
 				IddleTimeout:    iddleTimeout,
 				ShutdownTimeout: shutdownTimeout,
+				Storage:         storage,
 				Logger:          logger,
 				Client:          client,
 			})
@@ -91,8 +97,31 @@ func command() *cobra.Command {
 			signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 			e := make(chan error)
+
 			go func() {
 				e <- srv.ListenAndServe()
+			}()
+
+			go func() {
+				timeout := time.After(iddleTimeout)
+				ticker := time.Tick(500 * time.Millisecond)
+			loop:
+				for {
+					select {
+					case <-timeout:
+						context := context.Background()
+						client.CoreV1().Pods(namespace).Delete(context, hostname, metav1.DeleteOptions{
+							GracePeriodSeconds: pointer.Int64Ptr(15),
+						})
+						logger.Warn("session wait timeout exceeded")
+						break loop
+					case <-ticker:
+						if storage.IsEmpty() {
+							break
+						}
+						break loop
+					}
+				}
 			}()
 
 			select {
@@ -107,7 +136,7 @@ func command() *cobra.Command {
 			defer cancel()
 
 			if err := srv.Shutdown(ctx); err != nil {
-				logger.Fatalf("faled to stop", err)
+				logger.Fatalf("failed to stop", err)
 			}
 		},
 	}
