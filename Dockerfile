@@ -1,5 +1,7 @@
 FROM golang:alpine AS builder
 
+ARG BUILD_VERSION
+
 RUN apk add --quiet --no-cache build-base git
 
 WORKDIR /src
