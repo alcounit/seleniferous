@@ -14,7 +14,7 @@ Flags:
       --listhen-port string                  port to use for incomming requests (default "4445")
       --browser-port string                  browser port (default "4444")
       --proxy-default-path string            path used by handler (default "/session")
-      --iddle-timeout duration               time in seconds for iddling session (default 2m0s)
+      --idle-timeout duration                time in seconds for idle session (default 2m0s)
       --namespace string                     kubernetes namespace (default "selenosis")
       --graceful-shutdown-timeout duration   time in seconds  gracefull shutdown timeout (default 15s)
   -h, --help                                 help for seleniferous

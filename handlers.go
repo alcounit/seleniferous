@@ -168,8 +168,8 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 							Path:   path.Join(app.proxyPath, sessionId),
 						},
 						ID: sessionId,
-						OnTimeout: onTimeout(app.iddleTimeout, func() {
-							logger.Warnf("session timed out: %s, after %.2fs", sessionId, app.iddleTimeout.Seconds())
+						OnTimeout: onTimeout(app.idleTimeout, func() {
+							logger.Warnf("session timed out: %s, after %.2fs", sessionId, app.idleTimeout.Seconds())
 							cancelFunc()
 						}),
 						CancelFunc: cancelFunc,
@@ -206,14 +206,20 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 
 	fragments := strings.Split(r.URL.Path, "/")
 	vars := mux.Vars(r)
-	id := vars["sessionId"]
+	id, ok := vars["sessionId"]
+
+	if !ok {
+		app.logger.Error("session id not found")
+		jSONError(w, "session id not found", http.StatusBadRequest)
+		return
+	}
 
 	logger := app.logger.WithFields(logrus.Fields{
 		"request_id": uuid.New(),
 		"request":    fmt.Sprintf("%s %s", r.Method, r.URL.Path),
 		"request_by": r.Header.Get("X-Forwarded-Selenosis"),
 	})
-	_, ok := app.bucket.get(id)
+	_, ok = app.bucket.get(id)
 
 	if ok {
 		(&httputil.ReverseProxy{
@@ -234,8 +240,8 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 						cancel = sess.CancelFunc
 						logger.Warnf("session %s delete request", id)
 					} else {
-						sess.OnTimeout = onTimeout(app.iddleTimeout, func() {
-							logger.Infof("session timed out: %s, after %.2fs", id, app.iddleTimeout.Seconds())
+						sess.OnTimeout = onTimeout(app.idleTimeout, func() {
+							logger.Infof("session timed out: %s, after %.2fs", id, app.idleTimeout.Seconds())
 							err := req{r}.buildURL(r.Host, id).delete()
 							if err != nil {
 								logger.Warnf("session %s delete request failed: %v", id, err)
@@ -301,18 +307,23 @@ func (app *App) HandleDevTools(w http.ResponseWriter, r *http.Request) {
 
 //HandleDownload ...
 func (app *App) HandleDownload(w http.ResponseWriter, r *http.Request) {
-	app.proxy(w, r, ports.Devtools)
+	app.proxy(w, r, ports.Fileserver)
 }
 
 //HandleClipboard ..
 func (app *App) HandleClipboard(w http.ResponseWriter, r *http.Request) {
-	app.proxy(w, r, ports.Devtools)
+	app.proxy(w, r, ports.Clipboard)
 }
 
 func (app *App) proxy(w http.ResponseWriter, r *http.Request, port string) {
 
 	vars := mux.Vars(r)
-	id := vars["sessionId"]
+	id, ok := vars["sessionId"]
+	if !ok {
+		app.logger.Error("session id not found")
+		jSONError(w, "session id not found", http.StatusBadRequest)
+		return
+	}
 	logger := app.logger.WithFields(logrus.Fields{
 		"request_id": uuid.New(),
 		"request":    fmt.Sprintf("%s %s", r.Method, r.URL.Path),
@@ -321,7 +332,7 @@ func (app *App) proxy(w http.ResponseWriter, r *http.Request, port string) {
 
 	fragments := strings.Split(r.URL.Path, "/")
 	remainingPath := "/" + strings.Join(fragments[3:], "/")
-	_, ok := app.bucket.get(id)
+	_, ok = app.bucket.get(id)
 
 	if ok {
 		(&httputil.ReverseProxy{

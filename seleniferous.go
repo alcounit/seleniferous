@@ -13,7 +13,7 @@ type Config struct {
 	ProxyPath       string
 	Hostname        string
 	Namespace       string
-	IddleTimeout    time.Duration
+	IdleTimeout     time.Duration
 	ShutdownTimeout time.Duration
 	Storage         *Storage
 	Logger          *logrus.Logger
@@ -26,7 +26,7 @@ type App struct {
 	proxyPath       string
 	hostname        string
 	namespace       string
-	iddleTimeout    time.Duration
+	idleTimeout     time.Duration
 	shutdownTimeout time.Duration
 	bucket          *Storage
 	logger          *logrus.Logger
@@ -40,7 +40,7 @@ func New(conf *Config) *App {
 		proxyPath:       conf.ProxyPath,
 		hostname:        conf.Hostname,
 		namespace:       conf.Namespace,
-		iddleTimeout:    conf.IddleTimeout,
+		idleTimeout:     conf.IdleTimeout,
 		shutdownTimeout: conf.ShutdownTimeout,
 		bucket:          conf.Storage,
 		logger:          conf.Logger,
