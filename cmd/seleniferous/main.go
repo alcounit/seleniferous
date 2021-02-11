@@ -29,7 +29,7 @@ func command() *cobra.Command {
 		browserPort     string
 		proxyPath       string
 		namespace       string
-		iddleTimeout    time.Duration
+		idleTimeout     time.Duration
 		shutdownTimeout time.Duration
 		shuttingDown    bool
 	)
@@ -69,7 +69,7 @@ func command() *cobra.Command {
 				ProxyPath:       proxyPath,
 				Hostname:        hostname,
 				Namespace:       namespace,
-				IddleTimeout:    iddleTimeout,
+				IdleTimeout:     idleTimeout,
 				ShutdownTimeout: shutdownTimeout,
 				Storage:         storage,
 				Logger:          logger,
@@ -103,7 +103,7 @@ func command() *cobra.Command {
 			}()
 
 			go func() {
-				timeout := time.After(iddleTimeout)
+				timeout := time.After(idleTimeout)
 				ticker := time.Tick(500 * time.Millisecond)
 			loop:
 				for {
@@ -144,7 +144,7 @@ func command() *cobra.Command {
 	cmd.Flags().StringVar(&listhenPort, "listhen-port", "4445", "port to use for incomming requests")
 	cmd.Flags().StringVar(&browserPort, "browser-port", "4444", "browser port")
 	cmd.Flags().StringVar(&proxyPath, "proxy-default-path", "/session", "path used by handler")
-	cmd.Flags().DurationVar(&iddleTimeout, "iddle-timeout", 120*time.Second, "time in seconds for iddling session")
+	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 120*time.Second, "time in seconds for idle session")
 	cmd.Flags().StringVar(&namespace, "namespace", "selenosis", "kubernetes namespace")
 	cmd.Flags().DurationVar(&shutdownTimeout, "graceful-shutdown-timeout", 15*time.Second, "time in seconds  gracefull shutdown timeout")
 
