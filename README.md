@@ -1,3 +1,6 @@
+![GitHub release (latest by date)](https://img.shields.io/github/v/release/alcounit/seleniferous)
+![Docker Pulls](https://img.shields.io/docker/pulls/alcounit/seleniferous)
+![GitHub](https://img.shields.io/github/license/alcounit/seleniferous)
 # seleniferous
 seleniferous proxies incoming connections to browser container. It is responsible for freeing resources when a session deleted or an idle timeout occurs.
 
