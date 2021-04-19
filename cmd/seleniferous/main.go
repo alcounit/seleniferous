@@ -93,10 +93,17 @@ func command() *cobra.Command {
 				Handler: router,
 			}
 
-			stop := make(chan os.Signal)
+			stop := make(chan os.Signal, 1)
 			signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 			e := make(chan error)
+
+			cancelFunc := func() {
+				context := context.Background()
+				client.CoreV1().Pods(namespace).Delete(context, hostname, metav1.DeleteOptions{
+					GracePeriodSeconds: pointer.Int64Ptr(15),
+				})
+			}
 
 			go func() {
 				e <- srv.ListenAndServe()
@@ -109,11 +116,9 @@ func command() *cobra.Command {
 				for {
 					select {
 					case <-timeout:
-						context := context.Background()
-						client.CoreV1().Pods(namespace).Delete(context, hostname, metav1.DeleteOptions{
-							GracePeriodSeconds: pointer.Int64Ptr(15),
-						})
+						shuttingDown = true
 						logger.Warn("session wait timeout exceeded")
+						cancelFunc()
 						break loop
 					case <-ticker:
 						if storage.IsEmpty() {
@@ -128,7 +133,10 @@ func command() *cobra.Command {
 			case err := <-e:
 				logger.Fatalf("failed to start: %v", err)
 			case <-stop:
-				shuttingDown = true
+				if !shuttingDown {
+					logger.Warn("unexpected stop signal received")
+					defer cancelFunc()
+				}
 				logger.Warn("stopping seleniferous")
 			}
 
