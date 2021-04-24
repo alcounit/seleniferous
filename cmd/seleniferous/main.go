@@ -93,8 +93,8 @@ func command() *cobra.Command {
 				Handler: router,
 			}
 
-			stop := make(chan os.Signal, 1)
-			signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+			sigs := make(chan os.Signal, 1)
+			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
 
 			e := make(chan error)
 
@@ -132,12 +132,12 @@ func command() *cobra.Command {
 			select {
 			case err := <-e:
 				logger.Fatalf("failed to start: %v", err)
-			case <-stop:
+			case sig := <-sigs:
 				if !shuttingDown {
 					logger.Warn("unexpected stop signal received")
 					defer cancelFunc()
 				}
-				logger.Warn("stopping seleniferous")
+				logger.Warnf("stopping seleniferous: %s", sig.String())
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
