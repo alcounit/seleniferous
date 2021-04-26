@@ -18,6 +18,7 @@ type Config struct {
 	Storage         *Storage
 	Logger          *logrus.Logger
 	Client          *kubernetes.Clientset
+	Quit            chan error
 }
 
 //App ...
@@ -31,6 +32,7 @@ type App struct {
 	bucket          *Storage
 	logger          *logrus.Logger
 	client          *kubernetes.Clientset
+	quit            chan error
 }
 
 //New ...
@@ -45,5 +47,6 @@ func New(conf *Config) *App {
 		bucket:          conf.Storage,
 		logger:          conf.Logger,
 		client:          conf.Client,
+		quit:            conf.Quit,
 	}
 }

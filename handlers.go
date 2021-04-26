@@ -18,8 +18,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/utils/pointer"
 )
 
 var (
@@ -90,35 +88,20 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 	})
 
 	done := make(chan func())
+	cancel := func() {}
 
 	go func() {
 		(<-done)()
 	}()
 
-	cancel := func() {}
-
 	defer func() {
 		done <- cancel
 	}()
-
-	cancelFunc := func() {
-		context := context.Background()
-		app.client.CoreV1().Pods(app.namespace).Delete(context, app.hostname, metav1.DeleteOptions{
-			GracePeriodSeconds: pointer.Int64Ptr(15),
-		})
-	}
 
 	(&httputil.ReverseProxy{
 		Director: func(r *http.Request) {
 			r.URL.Scheme = "http"
 			r.URL.Host, r.URL.Path = net.JoinHostPort(app.hostname, app.browserPort), app.proxyPath
-
-			go func() {
-				<-r.Context().Done()
-
-				cancel = cancelFunc
-			}()
-
 			logger.Info("new session request")
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -135,19 +118,25 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 					if !ok {
 						value, ok := msg["value"]
 						if !ok {
-							cancel = cancelFunc
+							cancel = func() {
+								app.quit <- errors.New("failed to extract sessionId from response")
+							}
 							logger.Errorf("unable to extract sessionId from response")
 							return errors.New("selenium protocol")
 						}
 						valueMap, ok := value.(map[string]interface{})
 						if !ok {
-							cancel = cancelFunc
+							cancel = func() {
+								app.quit <- errors.New("failed to extract sessionId from response")
+							}
 							logger.Errorf("unable to extract sessionId from response")
 							return errors.New("selenium protocol")
 						}
 						sessionId, ok = valueMap["sessionId"].(string)
 						if !ok {
-							cancel = cancelFunc
+							cancel = func() {
+								app.quit <- errors.New("failed to extract sessionId from response")
+							}
 							logger.Errorf("unable to extract sessionId from response")
 							return errors.New("selenium protocol")
 						}
@@ -170,20 +159,24 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 						ID: sessionId,
 						OnTimeout: onTimeout(app.idleTimeout, func() {
 							logger.Warnf("session timed out: %s, after %.2fs", sessionId, app.idleTimeout.Seconds())
-							cancelFunc()
+							app.quit <- fmt.Errorf("session time out after %.2fs", app.idleTimeout.Seconds())
+
 						}),
-						CancelFunc: cancelFunc,
 					}
 					app.bucket.put(app.hostname, service)
 					logger.Infof("new session request completed: %s", sessionId)
 
 					return nil
 				}
-				cancel = cancelFunc
+				cancel = func() {
+					app.quit <- fmt.Errorf("failed to parse response body: %v", err)
+				}
 				logger.Errorf("unable to parse response body: %v", err)
 				return errors.New("response body parse error")
 			}
-			cancel = cancelFunc
+			cancel = func() {
+				app.quit <- fmt.Errorf("failed to read response body: %v", err)
+			}
 			logger.Errorf("unable to read response body: %v", err)
 			return errors.New("response body read error")
 		},
@@ -237,14 +230,17 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 					}
 
 					if r.Method == http.MethodDelete && len(fragments) == 5 {
-						cancel = sess.CancelFunc
+						cancel = func() {
+							app.quit <- errors.New("session deleted")
+						}
 						logger.Warnf("session %s delete request", id)
 					} else {
 						sess.OnTimeout = onTimeout(app.idleTimeout, func() {
-							logger.Infof("session timed out: %s, after %.2fs", id, app.idleTimeout.Seconds())
+							logger.Infof("session timeout: %s, after %.2fs", id, app.idleTimeout.Seconds())
 							err := req{r}.buildURL(r.Host, id).delete()
 							if err != nil {
 								logger.Warnf("session %s delete request failed: %v", id, err)
+								app.quit <- errors.New("failed to perform delete request")
 							}
 						})
 
