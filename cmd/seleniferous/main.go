@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -42,28 +43,36 @@ func command() *cobra.Command {
 			logger := logrus.New()
 			logger.Formatter = &logrus.JSONFormatter{}
 
+			logger.Infof("starting seleniferous %s", buildVersion)
+
 			hostname, err := os.Hostname()
 			if err != nil {
 				logger.Fatalf("can't get container hostname: %v", err)
 			}
 
-			logger.Infof("starting seleniferous %s", buildVersion)
+			logger.Infof("pod hostname %s", hostname)
 
 			client, err := buildClusterClient()
 			if err != nil {
 				logger.Fatalf("failed to build kubernetes client: %v", err)
 			}
 
-			ctx := context.Background()
-			_, err = client.CoreV1().Namespaces().Get(ctx, namespace, metav1.GetOptions{})
-			if err != nil {
-				logger.Fatalf("failed to get namespace: %s: %v", namespace, err)
-			}
-
 			logger.Info("kubernetes client created")
 
-			storage := seleniferous.NewStorage()
+			deleteFunc := func() {
+				context := context.Background()
+				client.CoreV1().Pods(namespace).Delete(context, hostname, metav1.DeleteOptions{
+					GracePeriodSeconds: pointer.Int64Ptr(15),
+				})
+				defer logger.Infof("deleting pod %s", hostname)
+			}
+			defer deleteFunc()
 
+			quit := make(chan error, 1)
+			sigs := make(chan os.Signal, 1)
+			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+
+			storage := seleniferous.NewStorage()
 			app := seleniferous.New(&seleniferous.Config{
 				BrowserPort:     browserPort,
 				ProxyPath:       proxyPath,
@@ -74,6 +83,7 @@ func command() *cobra.Command {
 				Storage:         storage,
 				Logger:          logger,
 				Client:          client,
+				Quit:            quit,
 			})
 
 			router := mux.NewRouter()
@@ -88,25 +98,14 @@ func command() *cobra.Command {
 				}
 				w.WriteHeader(http.StatusOK)
 			})
+
 			srv := &http.Server{
 				Addr:    net.JoinHostPort("", listhenPort),
 				Handler: router,
 			}
 
-			stop := make(chan os.Signal, 1)
-			signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-
-			e := make(chan error)
-
-			cancelFunc := func() {
-				context := context.Background()
-				client.CoreV1().Pods(namespace).Delete(context, hostname, metav1.DeleteOptions{
-					GracePeriodSeconds: pointer.Int64Ptr(15),
-				})
-			}
-
 			go func() {
-				e <- srv.ListenAndServe()
+				quit <- srv.ListenAndServe()
 			}()
 
 			go func() {
@@ -118,7 +117,7 @@ func command() *cobra.Command {
 					case <-timeout:
 						shuttingDown = true
 						logger.Warn("session wait timeout exceeded")
-						cancelFunc()
+						quit <- errors.New("new session request timeout")
 						break loop
 					case <-ticker:
 						if storage.IsEmpty() {
@@ -130,14 +129,10 @@ func command() *cobra.Command {
 			}()
 
 			select {
-			case err := <-e:
-				logger.Fatalf("failed to start: %v", err)
-			case <-stop:
-				if !shuttingDown {
-					logger.Warn("unexpected stop signal received")
-					defer cancelFunc()
-				}
-				logger.Warn("stopping seleniferous")
+			case err := <-quit:
+				logger.Infof("stopping seleniferous: %v", err)
+			case sig := <-sigs:
+				logger.Warnf("stopping seleniferous: %s", sig.String())
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)

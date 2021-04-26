@@ -9,7 +9,6 @@ type session struct {
 	ID         string
 	URL        *url.URL
 	OnTimeout  chan struct{}
-	CancelFunc func()
 }
 
 type Storage struct {
