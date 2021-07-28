@@ -102,6 +102,7 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 		Director: func(r *http.Request) {
 			r.URL.Scheme = "http"
 			r.URL.Host, r.URL.Path = net.JoinHostPort(app.hostname, app.browserPort), app.proxyPath
+			r.Host = "localhost"
 			logger.Info("new session request")
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -261,6 +262,7 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					r.URL.Host, r.URL.Path = sess.URL.Host, path.Clean(path.Join(sess.URL.Path, strings.Join(fragments[5:], "/")))
+					r.Host = "localhost"
 					logger.Info("proxy session")
 					return
 				}
