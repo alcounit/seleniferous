@@ -198,6 +198,10 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 		done <- cancel
 	}()
 
+	seUploadPath, uploadPath := "/se/file", "/file"
+	if strings.HasSuffix(r.URL.Path, seUploadPath) {
+		r.URL.Path = strings.TrimSuffix(r.URL.Path, seUploadPath) + uploadPath
+	}
 	fragments := strings.Split(r.URL.Path, "/")
 	vars := mux.Vars(r)
 	id, ok := vars["sessionId"]
