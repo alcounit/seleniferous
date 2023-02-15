@@ -44,11 +44,12 @@ type req struct {
 	*http.Request
 }
 
-func (r req) buildURL(hostPort, sessionID string) *sess {
-	host, port, _ := net.SplitHostPort(hostPort)
+func (r req) buildURL(sessionID string) *sess {
+	hostPort := r.Context().Value(http.LocalAddrContextKey).(net.Addr).String()
+	_, port, _ := net.SplitHostPort(hostPort)
 
 	return &sess{
-		url: fmt.Sprintf("http://%s/wd/hub/session/%s", net.JoinHostPort(host, port), sessionID),
+		url: fmt.Sprintf("http://%s/wd/hub/session/%s", net.JoinHostPort("127.0.0.1", port), sessionID),
 		id:  sessionID,
 	}
 }
@@ -202,6 +203,7 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(r.URL.Path, seUploadPath) {
 		r.URL.Path = strings.TrimSuffix(r.URL.Path, seUploadPath) + uploadPath
 	}
+
 	fragments := strings.Split(r.URL.Path, "/")
 	vars := mux.Vars(r)
 	id, ok := vars["sessionId"]
@@ -242,7 +244,7 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 					} else {
 						sess.OnTimeout = onTimeout(app.idleTimeout, func() {
 							logger.Infof("session timeout: %s, after %.2fs", id, app.idleTimeout.Seconds())
-							err := req{r}.buildURL(r.Host, id).delete()
+							err := req{r}.buildURL(id).delete()
 							if err != nil {
 								logger.Warnf("session %s delete request failed: %v", id, err)
 								app.quit <- errors.New("failed to perform delete request")
