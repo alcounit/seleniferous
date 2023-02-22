@@ -139,7 +139,7 @@ func command() *cobra.Command {
 			defer cancel()
 
 			if err := srv.Shutdown(ctx); err != nil {
-				logger.Fatalf("failed to stop", err)
+				logger.Errorf("failed to stop", err)
 			}
 		},
 	}
