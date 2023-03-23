@@ -38,7 +38,7 @@ func command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "seleniferous",
 		Short: "seleniferous is a sidecar proxy for selenosis",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			var err error
 			logger := logrus.New()
 			logger.Formatter = &logrus.JSONFormatter{}
@@ -47,24 +47,27 @@ func command() *cobra.Command {
 
 			hostname, err := os.Hostname()
 			if err != nil {
-				logger.Fatalf("can't get container hostname: %v", err)
+				logger.Errorf("can't get container hostname: %v", err)
+			} else {
+				hostname = os.Getenv("HOSTNAME")
 			}
 
 			logger.Infof("pod hostname %s", hostname)
 
 			client, err := buildClusterClient()
 			if err != nil {
-				logger.Fatalf("failed to build kubernetes client: %v", err)
+				logger.Errorf("failed to build kubernetes client: %v", err)
+				return err
 			}
 
 			logger.Info("kubernetes client created")
 
 			deleteFunc := func() {
 				context := context.Background()
-				client.CoreV1().Pods(namespace).Delete(context, hostname, metav1.DeleteOptions{
+				err := client.CoreV1().Pods(namespace).Delete(context, hostname, metav1.DeleteOptions{
 					GracePeriodSeconds: pointer.Int64Ptr(15),
 				})
-				defer logger.Infof("deleting pod %s", hostname)
+				defer logger.WithError(err).Infof("deleting pod %s", hostname)
 			}
 			defer deleteFunc()
 
@@ -138,9 +141,11 @@ func command() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer cancel()
 
-			if err := srv.Shutdown(ctx); err != nil {
+			if err = srv.Shutdown(ctx); err != nil {
 				logger.Errorf("failed to stop", err)
 			}
+
+			return nil
 		},
 	}
 
@@ -172,6 +177,6 @@ func buildClusterClient() (*kubernetes.Clientset, error) {
 
 func main() {
 	if err := command().Execute(); err != nil {
-		os.Exit(1)
+		fmt.Printf("err: %v", err)
 	}
 }

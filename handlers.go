@@ -79,7 +79,7 @@ func (s sess) delete() error {
 	return nil
 }
 
-//HandleSession ...
+// HandleSession ...
 func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 
 	logger := app.logger.WithFields(logrus.Fields{
@@ -102,7 +102,7 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 	(&httputil.ReverseProxy{
 		Director: func(r *http.Request) {
 			r.URL.Scheme = "http"
-			r.URL.Host, r.URL.Path = net.JoinHostPort(app.hostname, app.browserPort), app.proxyPath
+			r.URL.Host, r.URL.Path = net.JoinHostPort("127.0.0.1", app.browserPort), app.proxyPath
 			r.Host = "localhost"
 			logger.Info("new session request")
 		},
@@ -155,7 +155,7 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 					service := &session{
 						URL: &url.URL{
 							Scheme: "http",
-							Host:   net.JoinHostPort(app.hostname, app.browserPort),
+							Host:   net.JoinHostPort("127.0.0.1", app.browserPort),
 							Path:   path.Join(app.proxyPath, sessionId),
 						},
 						ID: sessionId,
@@ -185,7 +185,7 @@ func (app *App) HandleSession(w http.ResponseWriter, r *http.Request) {
 	}).ServeHTTP(w, r)
 }
 
-//HandleProxy ...
+// HandleProxy ...
 func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 
 	done := make(chan func())
@@ -304,17 +304,17 @@ func (app *App) HandleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-//HandleDevTools ...
+// HandleDevTools ...
 func (app *App) HandleDevTools(w http.ResponseWriter, r *http.Request) {
 	app.proxy(w, r, ports.Devtools)
 }
 
-//HandleDownload ...
+// HandleDownload ...
 func (app *App) HandleDownload(w http.ResponseWriter, r *http.Request) {
 	app.proxy(w, r, ports.Fileserver)
 }
 
-//HandleClipboard ..
+// HandleClipboard ..
 func (app *App) HandleClipboard(w http.ResponseWriter, r *http.Request) {
 	app.proxy(w, r, ports.Clipboard)
 }
@@ -342,7 +342,7 @@ func (app *App) proxy(w http.ResponseWriter, r *http.Request, port string) {
 		(&httputil.ReverseProxy{
 			Director: func(r *http.Request) {
 				r.URL.Scheme = "http"
-				r.URL.Host = net.JoinHostPort(app.hostname, port)
+				r.URL.Host = net.JoinHostPort("127.0.0.1", port)
 				r.URL.Path = remainingPath
 				logger.Infof("proxying %s", fragments[1])
 			},
