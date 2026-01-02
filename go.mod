@@ -2,16 +2,20 @@ module github.com/alcounit/seleniferous/v2
 
 go 1.24.4
 
+require github.com/gorilla/websocket v1.5.3
+
 require (
-	github.com/caarlos0/env v3.5.0+incompatible
-	github.com/evangwt/go-vncproxy v1.1.0
+	github.com/alcounit/browser-controller v0.0.1
+	github.com/alcounit/browser-service v0.0.1
+	github.com/go-chi/chi/v5 v5.2.3
+	github.com/google/uuid v1.6.0
+	github.com/rs/zerolog v1.34.0
 )
 
-require github.com/gorilla/websocket v1.5.1
-
 require (
-	github.com/evangwt/go-bufcopy v0.1.1
-	github.com/pkg/errors v0.9.1
-	github.com/ruzhila/websockify-go v0.0.0-20240506112532-c0fd2b22534b
-	golang.org/x/net v0.17.0
+	dario.cat/mergo v1.0.2 // indirect
+	github.com/alcounit/selenosis/v2 v2.0.0
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
+	golang.org/x/sys v0.31.0 // indirect
 )
