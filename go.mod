@@ -1,4 +1,4 @@
-module github.com/alcounit/seleniferous
+module github.com/alcounit/seleniferous/v2
 
 go 1.24.4
 
