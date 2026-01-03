@@ -108,8 +108,8 @@ func main() {
 		defer broadcaster.Unsubscribe(sub)
 
 		for event := range sub {
-			if event.Type == internal.EventTypeError || event.Type == internal.EventTypeDeleted {
-				log.Info().Interface("event", event).Msg("session timed out")
+			if event.Type == internal.EventTypeError || event.Type == internal.EventTypeDeleted || event.Type == internal.EventTypeTimedout {
+				log.Info().Interface("event", event).Msg("critical event received")
 				select {
 				case stopCh <- syscall.SIGTERM:
 				default:
