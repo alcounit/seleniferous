@@ -1,7 +1,7 @@
 BINARY_NAME := seleniferous
 DOCKER_REGISTRY ?= ${REGISTRY}
 IMAGE_NAME := $(DOCKER_REGISTRY)/$(BINARY_NAME)
-VERSION ?= v1.0.1
+VERSION ?= v2.0.0
 PLATFORM ?= linux/amd64
 
 .PHONY: all docker-build docker-push deploy clean show-vars
