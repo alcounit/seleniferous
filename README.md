@@ -19,8 +19,8 @@ Seleniferous is configured via environment variables:
 | --- | --- | --- |
 | `LISTEN_ADDR` | `:4445` | HTTP listen address. |
 | `BROWSER_PORT` | `4444` | Local browser port inside the pod. |
-| `SESSION_CREATE_TIMEOUT` | `5m` | Max time to wait for first session request. |
-| `SESSION_IDLE_TIMEOUT` | `5m` | Max idle time after session creation. |
+| `SESSION_CREATE_TIMEOUT` | `1m` | Maximum duration to wait for a browser response. |
+| `SESSION_IDLE_TIMEOUT` | `5m` | Max time to wait for first session request or max idle time after session creation. |
 | `ROUTING_RULES` | empty | Additional routing rules for internal proxying. |
 | `POD_IP` | auto | Pod IP used to derive stable `sessionId`. |
 

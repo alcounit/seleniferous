@@ -42,9 +42,10 @@ var (
 )
 
 type ServiceConfig struct {
-	IPUUID      string
-	BrowserPort string
-	Rules       []rule.Rule
+	IPUUID               string
+	BrowserPort          string
+	Rules                []rule.Rule
+	SessionCreateTimeout time.Duration
 }
 
 type Service struct {
@@ -84,7 +85,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 		Path:   req.URL.Path,
 	}
 
-	if err := wait(url.String(), 10*time.Second); err != nil {
+	if err := wait(url.String(), s.config.SessionCreateTimeout); err != nil {
 		log.Err(err).Msg("selenium service is unavailable")
 		writeErrorResponse(rw, http.StatusServiceUnavailable, err)
 		return
