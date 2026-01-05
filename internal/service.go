@@ -141,6 +141,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 
 		if externalURLPresent {
 			selenium.UpdateBiDiURL("ws", externalURL.Host, originalSessionId, s.config.IPUUID, response)
+			selenium.UpdateChromeCDPURL("ws", externalURL.Host, originalSessionId, s.config.IPUUID, response)
 		}
 
 		body, err = json.Marshal(response)
