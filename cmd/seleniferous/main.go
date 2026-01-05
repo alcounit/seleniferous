@@ -31,7 +31,7 @@ func main() {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	log := zerolog.New(os.Stdout).With().Timestamp().Logger()
 
-	cfg, listenAddr, createTimeout, idleTimeout, err := loadConfig()
+	cfg, listenAddr, idleTimeout, err := loadConfig()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load app settings")
 	}
@@ -65,12 +65,12 @@ func main() {
 		return http.HandlerFunc(fn)
 	})
 
-	createTimeoutMiddleWare := waitFirstRequest(createTimeout, func() {
+	createTimeoutMiddleWare := waitFirstRequest(idleTimeout, func() {
 		broadcaster.Broadcast(sessionCreateTimeout())
 	})
 	router.With(createTimeoutMiddleWare).Post("/session", service.CreateSession)
 
-	idleTimeoutMiddleWare := waitFirstRequest(createTimeout+idleTimeout, func() {
+	idleTimeoutMiddleWare := waitFirstRequest(idleTimeout+1*time.Second, func() {
 		broadcaster.Broadcast(sessionIdleTimeout())
 	})
 	router.With(idleTimeoutMiddleWare).Route("/session/{sessionId}", func(r chi.Router) {
@@ -108,8 +108,8 @@ func main() {
 		defer broadcaster.Unsubscribe(sub)
 
 		for event := range sub {
-			if event.Type == internal.EventTypeError || event.Type == internal.EventTypeDeleted {
-				log.Info().Interface("event", event).Msg("session timed out")
+			if event.Type == internal.EventTypeError || event.Type == internal.EventTypeDeleted || event.Type == internal.EventTypeTimedout {
+				log.Info().Interface("event", event).Msg("critical event received")
 				select {
 				case stopCh <- syscall.SIGTERM:
 				default:
@@ -132,43 +132,43 @@ func main() {
 	os.Exit(1)
 }
 
-func loadConfig() (internal.ServiceConfig, string, time.Duration, time.Duration, error) {
+func loadConfig() (internal.ServiceConfig, string, time.Duration, error) {
 	var cfg internal.ServiceConfig
 
 	addr := env.GetEnvOrDefault("LISTEN_ADDR", ":4445")
 	cfg.BrowserPort = env.GetEnvOrDefault("BROWSER_PORT", "4444")
 
-	createTimeout := env.GetEnvDurationOrDefault("SESSION_CREATE_TIMEOUT", 5*time.Minute)
-	idleTimeout := env.GetEnvDurationOrDefault("SESSION_IDLE_TIMEOUT", 5*time.Minute)
+	cfg.SessionCreateTimeout = env.GetEnvDurationOrDefault("SESSION_CREATE_TIMEOUT", 1*time.Minute)
+	sessionIdleTimeout := env.GetEnvDurationOrDefault("SESSION_IDLE_TIMEOUT", 5*time.Minute)
 
 	rules, err := rule.LoadRulesFromEnv("ROUTING_RULES")
 	if err != nil {
-		return internal.ServiceConfig{}, "", 0, 0, err
+		return internal.ServiceConfig{}, "", 0, err
 	}
 	cfg.Rules = rules
 
 	podIP, err := getPodIP()
 	if err != nil {
-		return cfg, "", createTimeout, idleTimeout, err
+		return cfg, "", sessionIdleTimeout, err
 	}
 
 	ipUUID, err := ipuuid.IPToUUID(podIP)
 	if err != nil {
-		return cfg, "", createTimeout, idleTimeout, err
+		return cfg, "", sessionIdleTimeout, err
 	}
 	cfg.IPUUID = ipUUID.String()
 
 	if addr == "" {
-		return cfg, "", createTimeout, idleTimeout,
+		return cfg, "", sessionIdleTimeout,
 			errors.New("LISTEN_ADDR must be provided")
 	}
 
 	if cfg.BrowserPort == "" {
-		return cfg, "", createTimeout, idleTimeout,
+		return cfg, "", sessionIdleTimeout,
 			errors.New("BROWSER_PORT must be provided")
 	}
 
-	return cfg, addr, createTimeout, idleTimeout, nil
+	return cfg, addr, sessionIdleTimeout, nil
 }
 
 func getPodIP() (net.IP, error) {
