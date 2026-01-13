@@ -77,9 +77,10 @@ The build process is controlled via the following Makefile variables:
 
 Variable	Description
 - BINARY_NAME	Name of the produced binary (seleniferous).
-- DOCKER_REGISTRY	Docker registry prefix (passed via environment).
+- REGISTRY	Docker registry prefix (default: localhost:5000).
 - IMAGE_NAME	Full image name (<registry>/seleniferous).
-- VERSION	Image version/tag (passed via environment).
+- VERSION	Image version/tag (default: develop).
 - PLATFORM	Target platform (default: linux/amd64).
+- CONTAINER_TOOL docker cmd
 
-DOCKER_REGISTRY is expected to be provided externally, which allows the same Makefile to be used locally and in CI.
+REGISTRY, VERSION is expected to be provided externally, which allows the same Makefile to be used locally and in CI.
