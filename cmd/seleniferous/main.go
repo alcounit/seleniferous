@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/alcounit/browser-service/pkg/broadcast"
-	"github.com/alcounit/seleniferous/v2/internal"
 	"github.com/alcounit/seleniferous/v2/pkg/session"
 	"github.com/alcounit/seleniferous/v2/pkg/store"
+	"github.com/alcounit/seleniferous/v2/service"
 	"github.com/alcounit/selenosis/v2/pkg/env"
 	"github.com/alcounit/selenosis/v2/pkg/ipuuid"
 	"github.com/alcounit/selenosis/v2/pkg/proxy/rule"
@@ -37,13 +37,13 @@ func main() {
 	}
 	log.Info().Msg("application configuration loaded")
 
-	broadcaster := broadcast.NewBroadcaster[internal.Event](10)
+	broadcaster := broadcast.NewBroadcaster[service.Event](10)
 	mgr := session.NewManager(idleTimeout, func(sessionId string) {
 		broadcaster.Broadcast(sessionIdleTimeout())
 		log.Info().Str("sessionId", sessionId).Msg("session timed out")
 	})
 	store := store.NewDefaultStore()
-	service := internal.NewService(cfg, store, mgr, broadcaster)
+	svc := service.NewService(cfg, store, mgr, broadcaster)
 
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
@@ -68,20 +68,20 @@ func main() {
 	createTimeoutMiddleWare := waitFirstRequest(idleTimeout, func() {
 		broadcaster.Broadcast(sessionCreateTimeout())
 	})
-	router.With(createTimeoutMiddleWare).Post("/session", service.CreateSession)
+	router.With(createTimeoutMiddleWare).Post("/session", svc.CreateSession)
 
 	idleTimeoutMiddleWare := waitFirstRequest(idleTimeout+1*time.Second, func() {
 		broadcaster.Broadcast(sessionIdleTimeout())
 	})
 	router.With(idleTimeoutMiddleWare).Route("/session/{sessionId}", func(r chi.Router) {
-		r.HandleFunc("/*", service.ProxySession)
+		r.HandleFunc("/*", svc.ProxySession)
 	})
 
 	router.Route("/selenosis/v1", func(r chi.Router) {
 		r.Route("/proxy/{sessionId}/proxy", func(r chi.Router) {
-			r.HandleFunc("/*", service.RouteHTTP)
+			r.HandleFunc("/*", svc.RouteHTTP)
 		})
-		r.HandleFunc("/vnc/{sessionId}", service.RouteVNC)
+		r.HandleFunc("/vnc/{sessionId}", svc.RouteVNC)
 	})
 
 	srv := &http.Server{
@@ -108,7 +108,7 @@ func main() {
 		defer broadcaster.Unsubscribe(sub)
 
 		for event := range sub {
-			if event.Type == internal.EventTypeError || event.Type == internal.EventTypeDeleted || event.Type == internal.EventTypeTimedout {
+			if event.Type == service.EventTypeError || event.Type == service.EventTypeDeleted || event.Type == service.EventTypeTimedout {
 				log.Info().Interface("event", event).Msg("critical event received")
 				select {
 				case stopCh <- syscall.SIGTERM:
@@ -132,18 +132,20 @@ func main() {
 	os.Exit(1)
 }
 
-func loadConfig() (internal.ServiceConfig, string, time.Duration, error) {
-	var cfg internal.ServiceConfig
+func loadConfig() (service.ServiceConfig, string, time.Duration, error) {
+	var cfg service.ServiceConfig
 
 	addr := env.GetEnvOrDefault("LISTEN_ADDR", ":4445")
 	cfg.BrowserPort = env.GetEnvOrDefault("BROWSER_PORT", "4444")
 
+	cfg.SessionRetryCount = env.GetEnvIntOrDefault("SESSION_RETRY_COUNT", 5)
+	cfg.SessionRetryDelay = env.GetEnvDurationOrDefault("SESSION_RETRY_DELAY", 2*time.Second)
 	cfg.SessionCreateTimeout = env.GetEnvDurationOrDefault("SESSION_CREATE_TIMEOUT", 1*time.Minute)
 	sessionIdleTimeout := env.GetEnvDurationOrDefault("SESSION_IDLE_TIMEOUT", 5*time.Minute)
 
 	rules, err := rule.LoadRulesFromEnv("ROUTING_RULES")
 	if err != nil {
-		return internal.ServiceConfig{}, "", 0, err
+		return service.ServiceConfig{}, "", 0, err
 	}
 	cfg.Rules = rules
 
@@ -196,17 +198,17 @@ func getPodIP() (net.IP, error) {
 	return nil, errors.New("no valid pod IP found")
 }
 
-func sessionCreateTimeout() internal.Event {
-	return internal.Event{
-		Type:      internal.EventTypeTimedout,
+func sessionCreateTimeout() service.Event {
+	return service.Event{
+		Type:      service.EventTypeTimedout,
 		Data:      "session creation timeout exceeded",
 		Timestamp: time.Now(),
 	}
 }
 
-func sessionIdleTimeout() internal.Event {
-	return internal.Event{
-		Type:      internal.EventTypeTimedout,
+func sessionIdleTimeout() service.Event {
+	return service.Event{
+		Type:      service.EventTypeTimedout,
 		Data:      "session idle timeout exceeded",
 		Timestamp: time.Now(),
 	}

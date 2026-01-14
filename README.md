@@ -19,6 +19,8 @@ Seleniferous is configured via environment variables:
 | --- | --- | --- |
 | `LISTEN_ADDR` | `:4445` | HTTP listen address. |
 | `BROWSER_PORT` | `4444` | Local browser port inside the pod. |
+| `SESSION_RETRY_COUNT` | `5` | Maximum number of retry attempts for session creation. |
+| `SESSION_RETRY_DELAY` | `2s` | Delay between consecutive session creation attempts. |
 | `SESSION_CREATE_TIMEOUT` | `1m` | Maximum duration to wait for a browser response. |
 | `SESSION_IDLE_TIMEOUT` | `5m` | Max time to wait for first session request or max idle time after session creation. |
 | `ROUTING_RULES` | empty | Additional routing rules for internal proxying. |
@@ -75,13 +77,10 @@ The build process is controlled via the following Makefile variables:
 
 Variable	Description
 - BINARY_NAME	Name of the produced binary (seleniferous).
-- DOCKER_REGISTRY	Docker registry prefix (passed via environment).
+- REGISTRY	Docker registry prefix (default: localhost:5000).
 - IMAGE_NAME	Full image name (<registry>/seleniferous).
-- VERSION	Image version/tag (default: v1.0.1).
+- VERSION	Image version/tag (default: develop).
 - PLATFORM	Target platform (default: linux/amd64).
+- CONTAINER_TOOL docker cmd
 
-DOCKER_REGISTRY is expected to be provided externally, which allows the same Makefile to be used locally and in CI.
-
-## Deployment
-
-To be added....
+REGISTRY, VERSION is expected to be provided externally, which allows the same Makefile to be used locally and in CI.

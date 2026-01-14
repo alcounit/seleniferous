@@ -1,4 +1,4 @@
-package internal
+package service
 
 import (
 	"bytes"
@@ -31,6 +31,12 @@ var (
 	errSessionCreate   = errors.New("failed to create a new browser session")
 	errSessionNotFound = errors.New("sessionId not found")
 
+	proxyTransport http.RoundTripper
+	dialTCP        = net.Dial
+	newWSProxy     = func(resolver proxy.TargetResolver, opts ...proxy.WSProxyOption) wsProxy {
+		return proxy.NewWebSocketReverseProxy(resolver, opts...)
+	}
+
 	errorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		log := logctx.FromContext(req.Context())
 		log.Err(err).Msg("proxy error")
@@ -45,6 +51,8 @@ type ServiceConfig struct {
 	IPUUID               string
 	BrowserPort          string
 	Rules                []rule.Rule
+	SessionRetryCount    int
+	SessionRetryDelay    time.Duration
 	SessionCreateTimeout time.Duration
 }
 
@@ -53,6 +61,10 @@ type Service struct {
 	manager     *session.Manager
 	broadcaster broadcast.Broadcaster[Event]
 	config      ServiceConfig
+}
+
+type wsProxy interface {
+	ServeHTTP(http.ResponseWriter, *http.Request)
 }
 
 func NewService(config ServiceConfig, store store.Store, mgr *session.Manager, broadcaster broadcast.Broadcaster[Event]) *Service {
@@ -108,6 +120,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 
 		if r.Body == nil {
 			log.Err(errSessionCreate).Msg("response body is empty")
+			r.Body = io.NopCloser(bytes.NewReader(nil))
 			return errSessionCreate
 		}
 
@@ -166,8 +179,8 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	transport := &retryTransport{
-		MaxRetries: 5,
-		Delay:      2 * time.Second,
+		MaxRetries: s.config.SessionRetryCount,
+		Delay:      s.config.SessionRetryDelay,
 	}
 
 	rp := proxy.NewHTTPReverseProxy(
@@ -208,22 +221,11 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 			return url, nil
 		}
 
-		onConnect := proxy.WithOnConnect(func() {
-			s.manager.Touch(requestSessionId)
-			log.Info().Str("sessionId", requestSessionId).Msg("ws connection established")
-		})
+		onConnect := proxy.WithOnConnect(s.wsOnConnect(requestSessionId))
+		onMessage := proxy.WithOnMessage(s.wsOnMessage(requestSessionId))
+		onClose := proxy.WithOnClose(s.wsOnClose(requestSessionId))
 
-		onMessage := proxy.WithOnMessage(func() {
-			s.manager.Touch(requestSessionId)
-			log.Info().Str("sessionId", requestSessionId).Msg("ws message recieved")
-		})
-
-		onClose := proxy.WithOnClose(func() {
-			s.manager.Touch(requestSessionId)
-			log.Info().Str("sessionId", requestSessionId).Msg("ws connection closed")
-		})
-
-		rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose)
+		rp := newWSProxy(resolver, onConnect, onMessage, onClose)
 		rp.ServeHTTP(rw, req)
 		return
 	}
@@ -285,6 +287,11 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 
 	responseModifier := func(r *http.Response) error {
 
+		if r.Body == nil {
+			r.Body = io.NopCloser(bytes.NewReader(nil))
+			return nil
+		}
+
 		if r.Body != nil {
 			if body, err := io.ReadAll(r.Body); err == nil {
 				r.Body.Close()
@@ -314,11 +321,15 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 
 	}
 
-	rp := proxy.NewHTTPReverseProxy(
+	opts := []proxy.HTTPReverseProxyOptions{
 		proxy.WithRequestModifier(reqModifier),
 		proxy.WithResponseModifier(responseModifier),
 		proxy.WithErrorHandler(errorHandler),
-	)
+	}
+	if proxyTransport != nil {
+		opts = append(opts, proxy.WithTransport(proxyTransport))
+	}
+	rp := proxy.NewHTTPReverseProxy(opts...)
 
 	log.Info().Str("sessionId", originalSessionId).Msg("proxying session request")
 
@@ -356,7 +367,7 @@ func (s *Service) RouteHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	if proxyrule.IsEmpty() {
 		log.Error().Msg("no matching proxy rule found")
-		http.Error(rw, "no matching proxy rule", http.StatusBadGateway)
+		http.Error(rw, "no matching proxy rule", http.StatusNotFound)
 		return
 	}
 
@@ -376,7 +387,11 @@ func (s *Service) RouteHTTP(rw http.ResponseWriter, req *http.Request) {
 			Msg("proxy rule applied to request")
 	}
 
-	rp := proxy.NewHTTPReverseProxy(proxy.WithRequestModifier(reqModifier))
+	opts := []proxy.HTTPReverseProxyOptions{proxy.WithRequestModifier(reqModifier)}
+	if proxyTransport != nil {
+		opts = append(opts, proxy.WithTransport(proxyTransport))
+	}
+	rp := proxy.NewHTTPReverseProxy(opts...)
 	rp.ServeHTTP(rw, req)
 }
 
@@ -407,7 +422,7 @@ func (s *Service) RouteVNC(rw http.ResponseWriter, req *http.Request) {
 	defer wsconn.Close()
 
 	addr := "localhost:5900"
-	conn, err := net.Dial("tcp", addr)
+	conn, err := dialTCP("tcp", addr)
 	if err != nil {
 		log.Err(err).Msg("vnc tcp connection failed")
 		return
@@ -492,6 +507,27 @@ func (s *Service) getSessionId(key string) (string, bool) {
 	}
 
 	return str, ok
+}
+
+func (s *Service) wsOnConnect(sessionID string) func() {
+	return func() {
+		s.manager.Touch(sessionID)
+		log.Info().Str("sessionId", sessionID).Msg("ws connection established")
+	}
+}
+
+func (s *Service) wsOnMessage(sessionID string) func() {
+	return func() {
+		s.manager.Touch(sessionID)
+		log.Info().Str("sessionId", sessionID).Msg("ws message recieved")
+	}
+}
+
+func (s *Service) wsOnClose(sessionID string) func() {
+	return func() {
+		s.manager.Touch(sessionID)
+		log.Info().Str("sessionId", sessionID).Msg("ws connection closed")
+	}
 }
 
 func writeErrorResponse(rw http.ResponseWriter, status int, err error) {
