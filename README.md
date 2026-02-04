@@ -33,7 +33,7 @@ Seleniferous exposes Selenium-compatible endpoints on `/session` and internal pr
 | --- | --- | --- |
 | `POST` | `/session` | Create a new WebDriver session (proxied to local browser). |
 | `*` | `/session/{sessionId}/*` | Proxy all session traffic (HTTP and WebSocket). |
-| `WS` | `/playwright/{name}/{version}?ipuuid={ipuuid}` | Proxies WS traffic. |
+| `WS` | `/playwright` | Proxies WS traffic. |
 | `*` | `/selenosis/v1/proxy/{sessionId}/proxy/*` | Internal HTTP proxy used by Selenosis. |
 | `GET` | `/selenosis/v1/vnc/{sessionId}` | Internal VNC proxy used by Selenosis. |
 
