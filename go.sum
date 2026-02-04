@@ -4,8 +4,8 @@ github.com/alcounit/browser-controller v0.0.4 h1:bjwoEvYGsQQCl9tcUV9fs+HNHrvpGlW
 github.com/alcounit/browser-controller v0.0.4/go.mod h1:tpj7lwi2UJ49xt/vnEsZKAu5HAvtQJ7xbbcJO3wn+dc=
 github.com/alcounit/browser-service v0.0.4 h1:+1i3vQU0SialjmX/em2pjMB6Q+KgPngvqZacZZJvalY=
 github.com/alcounit/browser-service v0.0.4/go.mod h1:IiPWeaCHpl1uklnPqrzBqNVo8cyDakybEYX0MV7HjiU=
-github.com/alcounit/selenosis/v2 v2.0.3 h1:ewpHzsXUSmWKNlFxt58FyBSWa009jD+0gGyrTodGv1Y=
-github.com/alcounit/selenosis/v2 v2.0.3/go.mod h1:yDvsYZJ+cgsJIcFoOIF5djRyX3TIWG8qZsJL9SNddIk=
+github.com/alcounit/selenosis/v2 v2.0.4 h1:Lib2N3WVO9pjfV1YfxUcuFx6g3Y5shDIGMoSj+gfBUk=
+github.com/alcounit/selenosis/v2 v2.0.4/go.mod h1:36qVRQH05hYL5e90Sll6nfSDWwtMU7wCpn7K87BTqrQ=
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/go-chi/chi/v5 v5.2.3 h1:WQIt9uxdsAbgIYgid+BpYc+liqQZGMHRaUwp0JUcvdE=
 github.com/go-chi/chi/v5 v5.2.3/go.mod h1:L2yAIGWB3H+phAw1NxKwWM+7eUH/lU8pOMm5hHcoops=
