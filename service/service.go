@@ -31,11 +31,7 @@ var (
 	errSessionCreate   = errors.New("failed to create a new browser session")
 	errSessionNotFound = errors.New("sessionId not found")
 
-	proxyTransport http.RoundTripper
-	dialTCP        = net.Dial
-	newWSProxy     = func(resolver proxy.TargetResolver, opts ...proxy.WSProxyOption) wsProxy {
-		return proxy.NewWebSocketReverseProxy(resolver, opts...)
-	}
+	dialTCP = net.Dial
 
 	errorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		log := logctx.FromContext(req.Context())
@@ -44,7 +40,7 @@ var (
 		rw.WriteHeader(http.StatusInternalServerError)
 	}
 
-	localHost = "localhost"
+	localHost = "127.0.0.1"
 )
 
 type ServiceConfig struct {
@@ -61,10 +57,6 @@ type Service struct {
 	manager     *session.Manager
 	broadcaster broadcast.Broadcaster[Event]
 	config      ServiceConfig
-}
-
-type wsProxy interface {
-	ServeHTTP(http.ResponseWriter, *http.Request)
 }
 
 func NewService(config ServiceConfig, store store.Store, mgr *session.Manager, broadcaster broadcast.Broadcaster[Event]) *Service {
@@ -165,6 +157,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		s.storeSessionId(originalSessionId)
+		s.manager.Touch(s.config.IPUUID)
 
 		log.Info().Str("originalSessionId", originalSessionId).Str("fakeSessionId", s.config.IPUUID).Send()
 
@@ -221,11 +214,22 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 			return url, nil
 		}
 
-		onConnect := proxy.WithOnConnect(s.wsOnConnect(requestSessionId))
-		onMessage := proxy.WithOnMessage(s.wsOnMessage(requestSessionId))
-		onClose := proxy.WithOnClose(s.wsOnClose(requestSessionId))
+		onConnect := proxy.WithOnConnect(func() {
+			s.manager.Touch(requestSessionId)
+			log.Info().Str("sessionId", requestSessionId).Msg("ws connection established")
+		})
 
-		rp := newWSProxy(resolver, onConnect, onMessage, onClose)
+		onMessage := proxy.WithOnMessage(func() {
+			s.manager.Touch(requestSessionId)
+			log.Info().Str("sessionId", requestSessionId).Msg("ws message recieved")
+		})
+
+		onClose := proxy.WithOnClose(func() {
+			s.manager.Touch(requestSessionId)
+			log.Info().Str("sessionId", requestSessionId).Msg("ws connection closed")
+		})
+
+		rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose)
 		rp.ServeHTTP(rw, req)
 		return
 	}
@@ -321,18 +325,69 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 
 	}
 
-	opts := []proxy.HTTPReverseProxyOptions{
+	rp := proxy.NewHTTPReverseProxy(
 		proxy.WithRequestModifier(reqModifier),
 		proxy.WithResponseModifier(responseModifier),
 		proxy.WithErrorHandler(errorHandler),
-	}
-	if proxyTransport != nil {
-		opts = append(opts, proxy.WithTransport(proxyTransport))
-	}
-	rp := proxy.NewHTTPReverseProxy(opts...)
+	)
 
 	log.Info().Str("sessionId", originalSessionId).Msg("proxying session request")
 
+	rp.ServeHTTP(rw, req)
+}
+
+func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
+	log := logctx.FromContext(req.Context())
+
+	ipUUID := req.URL.Query().Get("ipuuid")
+	if ipUUID == "" {
+		log.Error().Msg("missing required url param: ipuuid")
+		http.Error(rw, "missing ipuuid", http.StatusBadRequest)
+		return
+	}
+
+	if ipUUID != s.config.IPUUID {
+		log.Err(errSessionNotFound).Msg("unknown sessionId")
+		http.Error(rw, "unknown ipuuid", http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := s.store.Get(ipUUID); !ok {
+		s.storeSessionId(ipUUID)
+		s.manager.Touch(ipUUID)
+	}
+
+	log.Info().Str("ipuuid", ipUUID).Msg("playwright proxy request")
+
+	resolver := func(r *http.Request) (*url.URL, error) {
+		url := &url.URL{
+			Scheme: "ws",
+			Host:   net.JoinHostPort(localHost, s.config.BrowserPort),
+			Path:   "/",
+		}
+		return url, nil
+	}
+
+	onConnect := proxy.WithOnConnect(func() {
+		s.manager.Touch(ipUUID)
+		log.Info().Str("sessionId", ipUUID).Msg("ws connection established")
+	})
+
+	onMessage := proxy.WithOnMessage(func() {
+		s.manager.Touch(ipUUID)
+		log.Info().Str("sessionId", ipUUID).Msg("ws message recieved")
+	})
+
+	onClose := proxy.WithOnClose(func() {
+		time.AfterFunc(3*time.Second, func() {
+			notifyDelete(s.broadcaster, "delete browser")
+		})
+		log.Info().Str("sessionId", ipUUID).Msg("ws connection closed")
+	})
+
+	retryDialer := proxy.WithRetryTimeout(s.config.SessionCreateTimeout)
+
+	rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose, retryDialer)
 	rp.ServeHTTP(rw, req)
 }
 
@@ -387,11 +442,8 @@ func (s *Service) RouteHTTP(rw http.ResponseWriter, req *http.Request) {
 			Msg("proxy rule applied to request")
 	}
 
-	opts := []proxy.HTTPReverseProxyOptions{proxy.WithRequestModifier(reqModifier)}
-	if proxyTransport != nil {
-		opts = append(opts, proxy.WithTransport(proxyTransport))
-	}
-	rp := proxy.NewHTTPReverseProxy(opts...)
+	rp := proxy.NewHTTPReverseProxy(proxy.WithRequestModifier(reqModifier))
+
 	rp.ServeHTTP(rw, req)
 }
 
@@ -421,7 +473,7 @@ func (s *Service) RouteVNC(rw http.ResponseWriter, req *http.Request) {
 	}
 	defer wsconn.Close()
 
-	addr := "localhost:5900"
+	addr := net.JoinHostPort(localHost, "5900")
 	conn, err := dialTCP("tcp", addr)
 	if err != nil {
 		log.Err(err).Msg("vnc tcp connection failed")
@@ -509,27 +561,6 @@ func (s *Service) getSessionId(key string) (string, bool) {
 	return str, ok
 }
 
-func (s *Service) wsOnConnect(sessionID string) func() {
-	return func() {
-		s.manager.Touch(sessionID)
-		log.Info().Str("sessionId", sessionID).Msg("ws connection established")
-	}
-}
-
-func (s *Service) wsOnMessage(sessionID string) func() {
-	return func() {
-		s.manager.Touch(sessionID)
-		log.Info().Str("sessionId", sessionID).Msg("ws message recieved")
-	}
-}
-
-func (s *Service) wsOnClose(sessionID string) func() {
-	return func() {
-		s.manager.Touch(sessionID)
-		log.Info().Str("sessionId", sessionID).Msg("ws connection closed")
-	}
-}
-
 func writeErrorResponse(rw http.ResponseWriter, status int, err error) {
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(status)
@@ -539,7 +570,7 @@ func writeErrorResponse(rw http.ResponseWriter, status int, err error) {
 func notifyError(broadcaster broadcast.Broadcaster[Event], source string, err error) {
 	broadcaster.Broadcast(Event{
 		Type:      EventTypeError,
-		Data:      err.Error(),
+		Data:      fmt.Sprintf("%s: %s", source, err.Error()),
 		Timestamp: time.Now(),
 	})
 }
@@ -547,6 +578,7 @@ func notifyError(broadcaster broadcast.Broadcaster[Event], source string, err er
 func notifyDelete(broadcaster broadcast.Broadcaster[Event], source string) {
 	broadcaster.Broadcast(Event{
 		Type:      EventTypeDeleted,
+		Data:      source,
 		Timestamp: time.Now(),
 	})
 }

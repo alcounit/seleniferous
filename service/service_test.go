@@ -10,7 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +22,7 @@ import (
 	"github.com/alcounit/selenosis/v2/pkg/proxy/rule"
 	"github.com/alcounit/selenosis/v2/pkg/selenium"
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 )
 
 func TestCreateSessionStoreNotEmpty(t *testing.T) {
@@ -655,15 +656,6 @@ func TestNotifyErrorAndDelete(t *testing.T) {
 	}
 }
 
-func TestWSHandlersTouch(t *testing.T) {
-	mgr := session.NewManager(time.Second, nil)
-	svc := NewService(ServiceConfig{}, store.NewDefaultStore(), mgr, &fakeBroadcaster{})
-
-	svc.wsOnConnect("s1")()
-	svc.wsOnMessage("s1")()
-	svc.wsOnClose("s1")()
-}
-
 func TestProxySessionHTTP(t *testing.T) {
 	st := store.NewDefaultStore()
 	st.Set("fake", "orig")
@@ -691,7 +683,7 @@ func TestProxySessionHTTP(t *testing.T) {
 		if gotReq == nil {
 			t.Fatal("expected request to reach transport")
 		}
-		if gotReq.URL.Host != "localhost:4444" {
+		if gotReq.URL.Host != "127.0.0.1" {
 			t.Fatalf("unexpected host: %s", gotReq.URL.Host)
 		}
 		if !strings.Contains(gotReq.URL.Path, "orig") {
@@ -788,17 +780,22 @@ func TestProxySessionRequestUpdateFails(t *testing.T) {
 func TestProxySessionDeleteBranch(t *testing.T) {
 	st := store.NewDefaultStore()
 	st.Set("fake", "orig")
-	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+	rec := &fakeBroadcaster{}
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), rec)
 
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return response(http.StatusOK, `{}`), nil
 	})
 
-	withProxyTransport(t, rt, func() {
-		req := newRequestWithParams(http.MethodDelete, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
-		rw := httptestRecorder()
-		svc.ProxySession(rw, req)
-	})
+		withProxyTransport(t, rt, func() {
+			req := newRequestWithParams(http.MethodDelete, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
+			rw := httptestRecorder()
+			svc.ProxySession(rw, req)
+		})
+
+	if !waitForEventType(rec, EventTypeDeleted, 4*time.Second) {
+		t.Fatal("expected delete event after delete request")
+	}
 }
 
 func TestProxySessionResponseInvalidJSON(t *testing.T) {
@@ -825,29 +822,195 @@ func TestProxySessionWebSocketPath(t *testing.T) {
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
-	var gotURL *url.URL
-	withWSProxy(t, func(resolver proxy.TargetResolver, opts ...proxy.WSProxyOption) wsProxy {
-		return wsProxyFunc(func(rw http.ResponseWriter, req *http.Request) {
-			u, err := resolver(req)
-			if err == nil {
-				gotURL = u
-			}
-		})
-	}, func() {
-		req := newRequestWithParams(http.MethodGet, "/session/fake/ws", nil, map[string]string{"sessionId": "fake"}, "")
-		req.Header.Set("Connection", "Upgrade")
-		req.Header.Set("Upgrade", "websocket")
-		rw := httptestRecorder()
+	req := newRequestWithParams(http.MethodGet, "/session/fake/ws", nil, map[string]string{"sessionId": "fake"}, "")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	rw := httptestRecorder()
 
+	svc.ProxySession(rw, req)
+
+	if rw.status != http.StatusBadGateway && rw.status != http.StatusInternalServerError {
+		t.Fatalf("expected proxy error status, got %d", rw.status)
+	}
+}
+
+func TestProxySessionWebSocketCallbacks(t *testing.T) {
+	port, received, shutdown := startWebSocketEchoServer(t)
+	defer shutdown()
+
+	st := store.NewDefaultStore()
+	st.Set("fake", "orig")
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: port}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = clientConn.Close() })
+	t.Cleanup(func() { _ = serverConn.Close() })
+
+	req := newRequestWithParams(http.MethodGet, "/session/fake/ws", nil, map[string]string{"sessionId": "fake"}, "")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rw := &hijackResponseWriter{conn: serverConn, header: make(http.Header)}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
 		svc.ProxySession(rw, req)
+	}()
 
-		if gotURL == nil {
-			t.Fatal("expected resolver to be called")
+	if err := readHTTPResponse(clientConn); err != nil {
+		t.Fatalf("failed to read upgrade response: %v", err)
+	}
+	if err := writeMaskedFrame(clientConn, 0x2, []byte("ping")); err != nil {
+		t.Fatalf("failed to write websocket frame: %v", err)
+	}
+
+	select {
+	case payload := <-received:
+		if string(payload) != "ping" {
+			t.Fatalf("unexpected upstream payload: %q", string(payload))
 		}
-		if gotURL.Scheme != "ws" || !strings.Contains(gotURL.Path, "orig") {
-			t.Fatalf("unexpected resolved url: %s", gotURL.String())
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for upstream websocket payload")
+	}
+
+	_ = clientConn.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for websocket proxy to exit")
+	}
+}
+
+func TestProxyPlaywrightMissingIPUUID(t *testing.T) {
+	st := store.NewDefaultStore()
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodGet, "/playwright", nil, nil, "")
+	rw := httptestRecorder()
+
+	svc.ProxyPlaywright(rw, req)
+
+	if rw.status != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rw.status)
+	}
+}
+
+func TestProxyPlaywrightUnknownIPUUID(t *testing.T) {
+	st := store.NewDefaultStore()
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=other", nil, nil, "")
+	rw := httptestRecorder()
+
+	svc.ProxyPlaywright(rw, req)
+
+	if rw.status != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rw.status)
+	}
+}
+
+func TestProxyPlaywrightStoresSessionWhenMissing(t *testing.T) {
+	st := store.NewDefaultStore()
+	svc := NewService(ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          "4444",
+		SessionCreateTimeout: 50 * time.Millisecond,
+	}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=fake", nil, nil, "")
+	rw := httptestRecorder()
+
+	svc.ProxyPlaywright(rw, req)
+
+	if rw.status != http.StatusBadGateway && rw.status != http.StatusInternalServerError {
+		t.Fatalf("expected proxy error status, got %d", rw.status)
+	}
+	if got, ok := st.Get("fake"); !ok || got != "fake" {
+		t.Fatalf("expected store mapping fake->fake, got %v (ok=%v)", got, ok)
+	}
+}
+
+func TestProxyPlaywrightKeepsExistingSession(t *testing.T) {
+	st := store.NewDefaultStore()
+	st.Set("fake", "orig")
+	svc := NewService(ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          "4444",
+		SessionCreateTimeout: 50 * time.Millisecond,
+	}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=fake", nil, nil, "")
+	rw := httptestRecorder()
+
+	svc.ProxyPlaywright(rw, req)
+
+	if rw.status != http.StatusBadGateway && rw.status != http.StatusInternalServerError {
+		t.Fatalf("expected proxy error status, got %d", rw.status)
+	}
+	if got, ok := st.Get("fake"); !ok || got != "orig" {
+		t.Fatalf("expected existing mapping fake->orig, got %v (ok=%v)", got, ok)
+	}
+}
+
+func TestProxyPlaywrightWebSocketCallbacks(t *testing.T) {
+	port, received, shutdown := startWebSocketEchoServer(t)
+	defer shutdown()
+
+	st := store.NewDefaultStore()
+	rec := &fakeBroadcaster{}
+	svc := NewService(ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          port,
+		SessionCreateTimeout: time.Second,
+	}, st, session.NewManager(time.Second, nil), rec)
+
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = clientConn.Close() })
+	t.Cleanup(func() { _ = serverConn.Close() })
+
+	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=fake", nil, nil, "")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rw := &hijackResponseWriter{conn: serverConn, header: make(http.Header)}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.ProxyPlaywright(rw, req)
+	}()
+
+	if err := readHTTPResponse(clientConn); err != nil {
+		t.Fatalf("failed to read upgrade response: %v", err)
+	}
+	if err := writeMaskedFrame(clientConn, 0x2, []byte("ping")); err != nil {
+		t.Fatalf("failed to write websocket frame: %v", err)
+	}
+
+	select {
+	case payload := <-received:
+		if string(payload) != "ping" {
+			t.Fatalf("unexpected upstream payload: %q", string(payload))
 		}
-	})
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for upstream websocket payload")
+	}
+
+	_ = clientConn.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for playwright websocket proxy to exit")
+	}
+
+	if !waitForEventType(rec, EventTypeDeleted, 4*time.Second) {
+		t.Fatal("expected delete event after websocket close")
+	}
 }
 
 func TestExternalBaseURLFromHeaders(t *testing.T) {
@@ -965,6 +1128,7 @@ func TestWaitSuccessAndTimeout(t *testing.T) {
 }
 
 type fakeBroadcaster struct {
+	mu     sync.Mutex
 	events []Event
 }
 
@@ -975,7 +1139,31 @@ func (f *fakeBroadcaster) Subscribe() chan Event {
 func (f *fakeBroadcaster) Unsubscribe(ch chan Event) {}
 
 func (f *fakeBroadcaster) Broadcast(event Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.events = append(f.events, event)
+}
+
+func (f *fakeBroadcaster) hasEventType(typ EventType) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, event := range f.events {
+		if event.Type == typ {
+			return true
+		}
+	}
+	return false
+}
+
+func waitForEventType(rec *fakeBroadcaster, typ EventType, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if rec.hasEventType(typ) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return rec.hasEventType(typ)
 }
 
 var defaultClientMu sync.Mutex
@@ -1007,28 +1195,103 @@ func withDefaultTransports(t *testing.T, rt http.RoundTripper, fn func()) {
 	fn()
 }
 
+func serveRoundTrip(conn net.Conn, rt http.RoundTripper) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	req, err := http.ReadRequest(reader)
+	if err != nil {
+		return
+	}
+	if req.URL.Scheme == "" {
+		req.URL.Scheme = "http"
+	}
+	if req.URL.Host == "" {
+		req.URL.Host = req.Host
+	}
+	resp, err := rt.RoundTrip(req)
+	if err != nil {
+		resp = &http.Response{
+			StatusCode: http.StatusBadGateway,
+			Body:       io.NopCloser(strings.NewReader(err.Error())),
+			Header:     make(http.Header),
+		}
+	}
+	_ = resp.Write(conn)
+	if resp.Body != nil {
+		resp.Body.Close()
+	}
+}
+
+func startWebSocketEchoServer(t *testing.T) (string, <-chan []byte, func()) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen on local port: %v", err)
+	}
+
+	received := make(chan []byte, 8)
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		for {
+			msgType, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			select {
+			case received <- append([]byte(nil), payload...):
+			default:
+			}
+			if err := conn.WriteMessage(msgType, payload); err != nil {
+				return
+			}
+		}
+	})
+
+	server := &http.Server{Handler: mux}
+	done := make(chan struct{})
+	go func() {
+		_ = server.Serve(listener)
+		close(done)
+	}()
+
+	shutdown := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+		_ = listener.Close()
+		<-done
+	}
+
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	return port, received, shutdown
+}
+
 func withProxyTransport(t *testing.T, rt http.RoundTripper, fn func()) {
 	t.Helper()
 	defaultClientMu.Lock()
-	prev := proxyTransport
-	proxyTransport = rt
+	prev := proxy.DefaultTransport
+	proxy.DefaultTransport = &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			clientConn, serverConn := net.Pipe()
+			go serveRoundTrip(serverConn, rt)
+			return clientConn, nil
+		},
+		DisableKeepAlives: true,
+	}
 	defer func() {
-		proxyTransport = prev
+		proxy.DefaultTransport = prev
 		defaultClientMu.Unlock()
 	}()
 	fn()
-}
-
-func withWSProxy(t *testing.T, fn func(resolver proxy.TargetResolver, opts ...proxy.WSProxyOption) wsProxy, run func()) {
-	t.Helper()
-	defaultClientMu.Lock()
-	prev := newWSProxy
-	newWSProxy = fn
-	defer func() {
-		newWSProxy = prev
-		defaultClientMu.Unlock()
-	}()
-	run()
 }
 
 func withDialTCP(t *testing.T, fn func(network, addr string) (net.Conn, error), run func()) {
@@ -1059,12 +1322,6 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
-}
-
-type wsProxyFunc func(http.ResponseWriter, *http.Request)
-
-func (f wsProxyFunc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	f(rw, req)
 }
 
 type recorder struct {
@@ -1101,6 +1358,19 @@ func newRequestWithParams(method, path string, body io.Reader, params map[string
 	rctx.RoutePath = routePath
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
 	return req.WithContext(ctx)
+}
+
+func readHTTPResponse(r io.Reader) error {
+	reader := bufio.NewReader(r)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		if line == "\r\n" {
+			return nil
+		}
+	}
 }
 
 type errorReader struct{}
