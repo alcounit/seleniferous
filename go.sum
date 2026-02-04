@@ -1,11 +1,11 @@
 dario.cat/mergo v1.0.2 h1:85+piFYR1tMbRrLcDwR18y4UKJ3aH1Tbzi24VRW1TK8=
 dario.cat/mergo v1.0.2/go.mod h1:E/hbnu0NxMFBjpMIE34DRGLWqDy0g5FuKDhCb31ngxA=
-github.com/alcounit/browser-controller v0.0.1 h1:fsEbOiFaJOyEgeUykVIxmlvopPPRAhXqPqt8rD4NtvY=
-github.com/alcounit/browser-controller v0.0.1/go.mod h1:gSuAuXFXY76a80jxblZMFOnnYw+k/vaAO3JZBYWLYEY=
-github.com/alcounit/browser-service v0.0.1 h1:Hj0eUKFyS43Ss0eEbN4bdDGYSvkWFWvS4Fx2g8bM+54=
-github.com/alcounit/browser-service v0.0.1/go.mod h1:7Lkiu+vsj41pnycVq8rG3h/AEduUiL65EeR2got1ApA=
-github.com/alcounit/selenosis/v2 v2.0.1 h1:SwtCzhx/037aYIrudjQ/i7AR6xLIvImUnM9wjO5y/7o=
-github.com/alcounit/selenosis/v2 v2.0.1/go.mod h1:yDvsYZJ+cgsJIcFoOIF5djRyX3TIWG8qZsJL9SNddIk=
+github.com/alcounit/browser-controller v0.0.4 h1:bjwoEvYGsQQCl9tcUV9fs+HNHrvpGlWbdXtCZ0TM/3g=
+github.com/alcounit/browser-controller v0.0.4/go.mod h1:tpj7lwi2UJ49xt/vnEsZKAu5HAvtQJ7xbbcJO3wn+dc=
+github.com/alcounit/browser-service v0.0.4 h1:+1i3vQU0SialjmX/em2pjMB6Q+KgPngvqZacZZJvalY=
+github.com/alcounit/browser-service v0.0.4/go.mod h1:IiPWeaCHpl1uklnPqrzBqNVo8cyDakybEYX0MV7HjiU=
+github.com/alcounit/selenosis/v2 v2.0.4 h1:Lib2N3WVO9pjfV1YfxUcuFx6g3Y5shDIGMoSj+gfBUk=
+github.com/alcounit/selenosis/v2 v2.0.4/go.mod h1:36qVRQH05hYL5e90Sll6nfSDWwtMU7wCpn7K87BTqrQ=
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/go-chi/chi/v5 v5.2.3 h1:WQIt9uxdsAbgIYgid+BpYc+liqQZGMHRaUwp0JUcvdE=
 github.com/go-chi/chi/v5 v5.2.3/go.mod h1:L2yAIGWB3H+phAw1NxKwWM+7eUH/lU8pOMm5hHcoops=

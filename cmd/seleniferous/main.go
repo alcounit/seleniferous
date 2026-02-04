@@ -65,17 +65,16 @@ func main() {
 		return http.HandlerFunc(fn)
 	})
 
-	createTimeoutMiddleWare := waitFirstRequest(idleTimeout, func() {
+	createTimeoutMiddleWare := waitFirstRequest(cfg.SessionCreateTimeout, func() {
 		broadcaster.Broadcast(sessionCreateTimeout())
 	})
-	router.With(createTimeoutMiddleWare).Post("/session", svc.CreateSession)
 
-	idleTimeoutMiddleWare := waitFirstRequest(idleTimeout+1*time.Second, func() {
-		broadcaster.Broadcast(sessionIdleTimeout())
-	})
-	router.With(idleTimeoutMiddleWare).Route("/session/{sessionId}", func(r chi.Router) {
+	router.With(createTimeoutMiddleWare).Post("/session", svc.CreateSession)
+	router.Route("/session/{sessionId}", func(r chi.Router) {
 		r.HandleFunc("/*", svc.ProxySession)
 	})
+
+	router.With(createTimeoutMiddleWare).Get("/playwright", svc.ProxyPlaywright)
 
 	router.Route("/selenosis/v1", func(r chi.Router) {
 		r.Route("/proxy/{sessionId}/proxy", func(r chi.Router) {
