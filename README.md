@@ -34,7 +34,7 @@ Seleniferous exposes Selenium-compatible endpoints on `/session` and internal pr
 | `POST` | `/session` | Create a new WebDriver session (proxied to local browser). |
 | `*` | `/session/{sessionId}/*` | Proxy all session traffic (HTTP and WebSocket). |
 | `WS` | `/playwright` | Proxies WS traffic. |
-| `*` | `/selenosis/v1/proxy/{sessionId}/proxy/*` | Internal HTTP proxy used by Selenosis. |
+| `*` | `/selenosis/v1/sessions/{sessionId}/proxy/http/*` | Internal HTTP proxy used by Selenosis. |
 | `GET` | `/selenosis/v1/vnc/{sessionId}` | Internal VNC proxy used by Selenosis. |
 
 ## Request flow
@@ -61,6 +61,48 @@ curl -sS -X POST http://{pod_ip}:4445/session \
 ```bash
 curl -sS -X GET http://{pod_ip}:4445/session/<sessionId>/url
 ```
+
+## Example: internal HTTP proxy
+
+The `/selenosis/v1/sessions/{sessionId}/proxy/http/*` endpoint lets Selenosis route HTTP requests through the sidecar to a target reachable from within the browser pod. The target and path rewriting are controlled by `ROUTING_RULES`.
+
+```bash
+curl -sS http://{pod_ip}:4445/selenosis/v1/sessions/<sessionId>/proxy/http/json
+```
+
+## Routing rules
+
+`ROUTING_RULES` is a JSON array that controls how `/selenosis/v1/sessions/{sessionId}/proxy/http/*` requests are forwarded to targets inside the browser pod.
+
+Each rule:
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `pathRegex` | yes | Regular expression matched against the full request path. Use named capture groups to extract path segments for rewriting. |
+| `target` | yes | Proxy destination in `host:port` format. |
+| `rewritePath` | no | Optional path template. Use `{groupName}` to substitute named capture group values. |
+
+Example — expose the Fileserver:
+
+```json
+[
+  {
+    "pathRegex": "^/selenosis/v1/sessions/[^/]+/proxy/http/(?P<path>.*)$",
+    "target": "127.0.0.1:8080",
+    "rewritePath": "/{path}"
+  }
+]
+```
+
+Set as an environment variable:
+
+```bash
+ROUTING_RULES='[{"pathRegex":"^/selenosis/v1/sessions/[^/]+/proxy/http/(?P<path>.*)$","target":"127.0.0.1:8080","rewritePath":"/{path}"}]'
+```
+
+A request to `/selenosis/v1/sessions/<sessionId>/proxy/http/json?file=somefile.txt` is rewritten to `/json?file=somefile.txt` and forwarded to `127.0.0.1:8080`.
+
+Multiple rules are evaluated in order; the first match is used.
 
 ## Networking and headers
 If you run behind a reverse proxy or ingress, set these headers so Seleniferous can build correct external URLs:

@@ -24,7 +24,6 @@ import (
 	"github.com/alcounit/selenosis/v2/pkg/selenium"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog/log"
 )
 
 var (
@@ -41,6 +40,9 @@ var (
 	}
 
 	localHost = "127.0.0.1"
+
+	defaultSleepTimeout       = 3 * time.Second
+	defaultSessionWaitTimeout = 10 * time.Second
 )
 
 type ServiceConfig struct {
@@ -78,8 +80,30 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	if req.Body == nil {
-		log.Err(errSessionCreate).Msg("request body can't be nil")
+		log.Err(errSessionCreate).Msg("request body is nil")
 		writeErrorResponse(rw, http.StatusBadRequest, errSessionCreate)
+		return
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		log.Err(errSessionCreate).Msg("failed to read request body")
+		writeErrorResponse(rw, http.StatusBadRequest, errSessionCreate)
+		return
+	}
+
+	var caps selenium.Capabilities
+	if err := json.Unmarshal(body, &caps); err != nil {
+		log.Err(err).Msg("failed to decode request body")
+		writeErrorResponse(rw, http.StatusBadRequest, errSessionCreate)
+		return
+	}
+
+	caps.RemoveSelenosisOptions()
+	body, err = json.Marshal(caps)
+	if err != nil {
+		log.Err(err).Msg("failed to encode request body")
+		writeErrorResponse(rw, http.StatusInternalServerError, errSessionCreate)
 		return
 	}
 
@@ -90,23 +114,30 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := wait(url.String(), s.config.SessionCreateTimeout); err != nil {
-		log.Err(err).Msg("selenium service is unavailable")
+		log.Err(err).Msg("browser service unavailable")
 		writeErrorResponse(rw, http.StatusServiceUnavailable, err)
 		return
 	}
 
+	log.Info().Msg("proxying session create request")
+
 	requestModifier := func(r *http.Request) {
 		r.Host = localHost
 		r.URL = url
-		log.Info().Str("browserAddr", r.URL.String()).Msg("request modified")
+
+		r.Header.Set("Content-Type", "application/json")
+		r.ContentLength = int64(len(body))
+		r.Header.Del("Content-Length")
+		r.Body = io.NopCloser(bytes.NewReader(body))
+
+		log.Info().Str("browserAddr", r.URL.String()).Msg("session create request modified")
 	}
 
 	externalURL, externalURLPresent := externalBaseURLFromHeaders(req.Header)
-
 	responseModifier := func(r *http.Response) error {
 
 		if r.StatusCode != http.StatusOK && r.StatusCode != http.StatusCreated {
-			log.Err(errSessionCreate).Msgf("unexpected status code: %d", r.StatusCode)
+			log.Err(errSessionCreate).Int("statusCode", r.StatusCode).Msg("unexpected status code")
 			return nil
 		}
 
@@ -151,22 +182,22 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 
 		body, err = json.Marshal(response)
 		if err != nil {
-			log.Err(err).Msg("error encoding the response body")
-			notifyError(s.broadcaster, "error encoding the response body", err)
+			log.Err(err).Msg("failed to encode response body")
+			notifyError(s.broadcaster, "failed to encode response body", err)
 			return err
 		}
 
 		s.storeSessionId(originalSessionId)
 		s.manager.Touch(s.config.IPUUID)
 
-		log.Info().Str("originalSessionId", originalSessionId).Str("fakeSessionId", s.config.IPUUID).Send()
+		log.Info().Str("originalSessionId", originalSessionId).Str("fakeSessionId", s.config.IPUUID).Msg("session id rewritten")
 
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Del("Content-Length")
 
-		log.Info().Str("sessionId", originalSessionId).Msg("response modified")
+		log.Info().Str("sessionId", originalSessionId).Msg("session create response modified")
 
 		return nil
 	}
@@ -183,7 +214,6 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 		proxy.WithErrorHandler(errorHandler),
 	)
 
-	log.Info().Msg("proxying session create request")
 	rp.ServeHTTP(rw, req)
 }
 
@@ -199,10 +229,10 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	s.manager.Touch(requestSessionId)
+
 	log.Info().Str("sessionId", requestSessionId).Msg("proxying session request")
 
 	if proxy.IsWebSocketRequest(req) {
-
 		resolver := func(r *http.Request) (*url.URL, error) {
 			url := &url.URL{
 				Scheme: "ws",
@@ -221,13 +251,15 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 
 		onMessage := proxy.WithOnMessage(func() {
 			s.manager.Touch(requestSessionId)
-			log.Info().Str("sessionId", requestSessionId).Msg("ws message recieved")
+			log.Info().Str("sessionId", requestSessionId).Msg("ws message received")
 		})
 
 		onClose := proxy.WithOnClose(func() {
 			s.manager.Touch(requestSessionId)
 			log.Info().Str("sessionId", requestSessionId).Msg("ws connection closed")
 		})
+
+		log.Info().Str("sessionId", requestSessionId).Msg("proxying websocket request")
 
 		rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose)
 		rp.ServeHTTP(rw, req)
@@ -237,12 +269,10 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 	reqModifier := func(r *http.Request) {
 		if req.Method == http.MethodDelete && len(pathutils.Parse(req.URL.Path)) == 2 {
 
-			go func() {
-				time.AfterFunc(3*time.Second, func() {
-					notifyDelete(s.broadcaster, "delete browser")
-				})
+			time.AfterFunc(defaultSleepTimeout, func() {
+				notifyDelete(s.broadcaster, "delete browser")
 				log.Info().Msg("delete browser request")
-			}()
+			})
 		} else {
 
 			if r.Body != nil {
@@ -285,44 +315,37 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 		}
 		r.Host = localHost
 
-		log.Info().Str("browserAddr", r.URL.String()).Msg("request modified")
-
+		log.Info().Str("sessionId", requestSessionId).Str("browserAddr", r.URL.String()).Msg("session proxy request modified")
 	}
 
 	responseModifier := func(r *http.Response) error {
-
 		if r.Body == nil {
 			r.Body = io.NopCloser(bytes.NewReader(nil))
 			return nil
 		}
 
-		if r.Body != nil {
-			if body, err := io.ReadAll(r.Body); err == nil {
-				r.Body.Close()
+		if body, err := io.ReadAll(r.Body); err == nil {
+			r.Body.Close()
 
-				var response selenium.Payload
-				if err = json.Unmarshal(body, &response); err == nil {
-					if _, ok := response.GetSessionId(); ok {
-						if ok := response.UpdateSessionId(s.config.IPUUID); ok {
-							if body, err = json.Marshal(response); err == nil {
-								r.ContentLength = int64(len(body))
-								r.Header.Set("Content-Type", "application/json")
-								r.Header.Del("Content-Length")
-
-								log.Info().Str("sessionId", originalSessionId).Msg("response modified")
-							}
+			var response selenium.Payload
+			if err = json.Unmarshal(body, &response); err == nil {
+				if _, ok := response.GetSessionId(); ok {
+					if ok := response.UpdateSessionId(s.config.IPUUID); ok {
+						if body, err = json.Marshal(response); err == nil {
+							r.ContentLength = int64(len(body))
+							r.Header.Set("Content-Type", "application/json")
+							r.Header.Del("Content-Length")
 						}
-
 					}
+
 				}
-				r.Body = io.NopCloser(bytes.NewReader(body))
 			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 
-		log.Info().Str("sessionId", originalSessionId).Msg("response modified")
+		log.Info().Str("sessionId", originalSessionId).Msg("session proxy response modified")
 
 		return nil
-
 	}
 
 	rp := proxy.NewHTTPReverseProxy(
@@ -330,8 +353,6 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 		proxy.WithResponseModifier(responseModifier),
 		proxy.WithErrorHandler(errorHandler),
 	)
-
-	log.Info().Str("sessionId", originalSessionId).Msg("proxying session request")
 
 	rp.ServeHTTP(rw, req)
 }
@@ -357,7 +378,7 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 		s.manager.Touch(ipUUID)
 	}
 
-	log.Info().Str("ipuuid", ipUUID).Msg("playwright proxy request")
+	log.Info().Str("sessionId", ipUUID).Msg("playwright proxy request")
 
 	resolver := func(r *http.Request) (*url.URL, error) {
 		url := &url.URL{
@@ -375,23 +396,25 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 
 	onMessage := proxy.WithOnMessage(func() {
 		s.manager.Touch(ipUUID)
-		log.Info().Str("sessionId", ipUUID).Msg("ws message recieved")
+		log.Info().Str("sessionId", ipUUID).Msg("ws message received")
 	})
 
 	onClose := proxy.WithOnClose(func() {
-		time.AfterFunc(3*time.Second, func() {
+		time.AfterFunc(defaultSleepTimeout, func() {
 			notifyDelete(s.broadcaster, "delete browser")
+			log.Info().Str("sessionId", ipUUID).Msg("ws connection closed")
 		})
-		log.Info().Str("sessionId", ipUUID).Msg("ws connection closed")
+
 	})
 
 	retryDialer := proxy.WithRetryTimeout(s.config.SessionCreateTimeout)
-
 	rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose, retryDialer)
 	rp.ServeHTTP(rw, req)
 }
 
 func (s *Service) RouteHTTP(rw http.ResponseWriter, req *http.Request) {
+	log := logctx.FromContext(req.Context())
+
 	sessionId := chi.URLParam(req, "sessionId")
 	if sessionId == "" {
 		log.Error().Msg("missing required url param: sessionId")
@@ -427,11 +450,10 @@ func (s *Service) RouteHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	reqModifier := func(r *http.Request) {
-
-		newPath := rule.SafeRewrite(proxyrule, req.URL.Path)
-
 		r.URL.Scheme = "http"
 		r.URL.Host = proxyrule.Target
+
+		newPath := rule.SafeRewrite(proxyrule, req.URL.Path)
 		r.URL.Path = path.Clean(newPath)
 
 		log.Info().
@@ -439,15 +461,17 @@ func (s *Service) RouteHTTP(rw http.ResponseWriter, req *http.Request) {
 			Str("originalPath", req.URL.Path).
 			Str("target", proxyrule.Target).
 			Str("sessionId", sessionId).
-			Msg("proxy rule applied to request")
+			Msg("http proxy request modified")
 	}
 
-	rp := proxy.NewHTTPReverseProxy(proxy.WithRequestModifier(reqModifier))
+	log.Info().Msg("proxying http proxy request to a browser")
 
+	rp := proxy.NewHTTPReverseProxy(proxy.WithRequestModifier(reqModifier))
 	rp.ServeHTTP(rw, req)
 }
 
 func (s *Service) RouteVNC(rw http.ResponseWriter, req *http.Request) {
+	log := logctx.FromContext(req.Context())
 
 	sessionId := chi.URLParam(req, "sessionId")
 	if sessionId == "" {
@@ -485,6 +509,8 @@ func (s *Service) RouteVNC(rw http.ResponseWriter, req *http.Request) {
 	defer cancel()
 
 	errCh := make(chan error, 2)
+
+	log.Info().Str("sessionId", sessionId).Msg("proxying vnc request")
 
 	go func() {
 		defer cancel()
@@ -564,7 +590,7 @@ func (s *Service) getSessionId(key string) (string, bool) {
 func writeErrorResponse(rw http.ResponseWriter, status int, err error) {
 	rw.Header().Set("Content-Type", "application/json")
 	rw.WriteHeader(status)
-	json.NewEncoder(rw).Encode(err)
+	json.NewEncoder(rw).Encode(map[string]string{"error": err.Error()})
 }
 
 func notifyError(broadcaster broadcast.Broadcaster[Event], source string, err error) {
@@ -596,7 +622,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		t.Base = http.DefaultTransport
 	}
 
-	if err := wait(req.URL.String(), 10*time.Second); err != nil {
+	if err := wait(req.URL.String(), defaultSessionWaitTimeout); err != nil {
 		return nil, err
 	}
 
@@ -626,7 +652,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		lastErr = err
-		log.Warn().Err(err).Msgf("roundtrip failed (%d/%d)", i+1, t.MaxRetries+1)
+		log.Warn().Err(err).Int("attempt", i+1).Int("maxAttempts", t.MaxRetries+1).Msg("roundtrip failed")
 	}
 
 	return nil, fmt.Errorf("all retries failed: %w", lastErr)

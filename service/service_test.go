@@ -139,6 +139,53 @@ func TestCreateSessionSuccess(t *testing.T) {
 	})
 }
 
+func TestCreateSessionRemovesSelenosisOptionsFromRequest(t *testing.T) {
+	st := store.NewDefaultStore()
+	cfg := ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          "4444",
+		SessionCreateTimeout: 100 * time.Millisecond,
+	}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	var gotBody []byte
+	respPayload := selenium.Payload{
+		"value": map[string]any{
+			"sessionId": "orig",
+		},
+	}
+	respBody, _ := json.Marshal(respPayload)
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodHead {
+			return response(http.StatusOK, ""), nil
+		}
+		gotBody, _ = io.ReadAll(req.Body)
+		return response(http.StatusOK, string(respBody)), nil
+	})
+
+	withDefaultTransports(t, rt, func() {
+		reqBody := `{"desiredCapabilities":{"browserName":"chrome","selenosis:options":{"labels":{"env":"test"}}}}`
+		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(reqBody), nil, "")
+		rw := httptestRecorder()
+
+		svc.CreateSession(rw, req)
+
+		if rw.status != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rw.status)
+		}
+	})
+
+	var forwarded map[string]any
+	if err := json.Unmarshal(gotBody, &forwarded); err != nil {
+		t.Fatalf("failed to decode forwarded body: %v", err)
+	}
+	dc, _ := forwarded["desiredCapabilities"].(map[string]any)
+	if _, ok := dc["selenosis:options"]; ok {
+		t.Fatalf("expected selenosis:options to be removed before forwarding, got %s", string(gotBody))
+	}
+}
+
 func TestCreateSessionUsesRetryConfig(t *testing.T) {
 	st := store.NewDefaultStore()
 	cfg := ServiceConfig{
@@ -787,11 +834,11 @@ func TestProxySessionDeleteBranch(t *testing.T) {
 		return response(http.StatusOK, `{}`), nil
 	})
 
-		withProxyTransport(t, rt, func() {
-			req := newRequestWithParams(http.MethodDelete, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
-			rw := httptestRecorder()
-			svc.ProxySession(rw, req)
-		})
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodDelete, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
+		rw := httptestRecorder()
+		svc.ProxySession(rw, req)
+	})
 
 	if !waitForEventType(rec, EventTypeDeleted, 4*time.Second) {
 		t.Fatal("expected delete event after delete request")
@@ -1473,4 +1520,116 @@ func TestExternalBaseURLFromHeadersURL(t *testing.T) {
 	if !ok || u.Scheme != "https" {
 		t.Fatalf("unexpected url: %#v (ok=%v)", u, ok)
 	}
+}
+
+func TestCreateSessionBodyReadError(t *testing.T) {
+	st := store.NewDefaultStore()
+	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodPost, "/session", io.NopCloser(errorReader{}), nil, "")
+	rw := httptestRecorder()
+
+	svc.CreateSession(rw, req)
+
+	if rw.status != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rw.status)
+	}
+}
+
+func TestCreateSessionInvalidRequestBody(t *testing.T) {
+	st := store.NewDefaultStore()
+	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString("{invalid"), nil, "")
+	rw := httptestRecorder()
+
+	svc.CreateSession(rw, req)
+
+	if rw.status != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rw.status)
+	}
+}
+
+func TestProxySessionResponseBodyNilInModifier(t *testing.T) {
+	st := store.NewDefaultStore()
+	st.Set("fake", "orig")
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	defaultClientMu.Lock()
+	prev := proxy.DefaultTransport
+	proxy.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: nil, Header: make(http.Header)}, nil
+	})
+	defer func() {
+		proxy.DefaultTransport = prev
+		defaultClientMu.Unlock()
+	}()
+
+	req := newRequestWithParams(http.MethodGet, "/session/fake/url", nil, map[string]string{"sessionId": "fake"}, "")
+	rw := httptestRecorder()
+	svc.ProxySession(rw, req)
+}
+
+func TestRouteVNCNormalClose(t *testing.T) {
+	st := store.NewDefaultStore()
+	st.Set("fake", "orig")
+	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = clientConn.Close() })
+	t.Cleanup(func() { _ = serverConn.Close() })
+
+	req := newRequestWithParams(http.MethodGet, "/vnc/fake", nil, map[string]string{"sessionId": "fake"}, "")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rw := &hijackResponseWriter{conn: serverConn, header: make(http.Header)}
+
+	dialClient, dialServer := net.Pipe()
+	t.Cleanup(func() { _ = dialClient.Close() })
+	t.Cleanup(func() { _ = dialServer.Close() })
+
+	withDialTCP(t, func(network, addr string) (net.Conn, error) {
+		return dialServer, nil
+	}, func() {
+		done := make(chan struct{})
+		go func() {
+			svc.RouteVNC(rw, req)
+			close(done)
+		}()
+
+		if err := readHTTPResponse(clientConn); err != nil {
+			t.Fatalf("failed to read upgrade response: %v", err)
+		}
+
+		go func() { _, _ = io.Copy(io.Discard, clientConn) }()
+
+		if err := writeMaskedFrame(clientConn, 0x8, []byte{0x03, 0xE8}); err != nil {
+			t.Fatalf("failed to write close frame: %v", err)
+		}
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for RouteVNC to exit after normal close")
+		}
+	})
+}
+
+func TestRetryTransportWaitFails(t *testing.T) {
+	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("down")
+	}), func() {
+		prev := defaultSessionWaitTimeout
+		defaultSessionWaitTimeout = 50 * time.Millisecond
+		defer func() { defaultSessionWaitTimeout = prev }()
+
+		rt := &retryTransport{MaxRetries: 0, Delay: 0}
+		req := newRequestWithParams(http.MethodPost, "http://example.com", nil, nil, "")
+		_, err := rt.RoundTrip(req)
+		if err == nil {
+			t.Fatal("expected error when wait fails")
+		}
+	})
 }
