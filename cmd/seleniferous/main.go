@@ -42,6 +42,8 @@ func main() {
 		broadcaster.Broadcast(sessionIdleTimeout())
 		log.Info().Str("sessionId", sessionId).Msg("session timed out")
 	})
+	defer mgr.Stop(cfg.IPUUID)
+
 	store := store.NewDefaultStore()
 	svc := service.NewService(cfg, store, mgr, broadcaster)
 
@@ -77,8 +79,8 @@ func main() {
 	router.With(createTimeoutMiddleWare).Get("/playwright", svc.ProxyPlaywright)
 
 	router.Route("/selenosis/v1", func(r chi.Router) {
-		r.Route("/proxy/{sessionId}/proxy", func(r chi.Router) {
-			r.HandleFunc("/*", svc.RouteHTTP)
+		r.Route("/sessions/{sessionId}/proxy", func(r chi.Router) {
+			r.HandleFunc("/http/*", svc.RouteHTTP)
 		})
 		r.HandleFunc("/vnc/{sessionId}", svc.RouteVNC)
 	})
