@@ -67,7 +67,7 @@ curl -sS -X GET http://{pod_ip}:4445/session/<sessionId>/url
 The `/selenosis/v1/sessions/{sessionId}/proxy/http/*` endpoint lets Selenosis route HTTP requests through the sidecar to a target reachable from within the browser pod. The target and path rewriting are controlled by `ROUTING_RULES`.
 
 ```bash
-curl -sS http://{pod_ip}:4445/selenosis/v1/sessions/<sessionId>/proxy/http/json
+curl -sS http://{selenosis}:4444/selenosis/v1/sessions/<sessionId>/proxy/http/json
 ```
 
 ## Routing rules
