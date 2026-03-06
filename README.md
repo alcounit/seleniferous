@@ -1,4 +1,4 @@
-[![Go Reference](https://pkg.go.dev/badge/github.com/alcounit/seleniferous.svg)](https://pkg.go.dev/github.com/alcounit/seleniferous/v2)
+[![Go Reference](https://pkg.go.dev/badge/github.com/alcounit/seleniferous.svg)](https://pkg.go.dev/github.com/alcounit/seleniferous/v2) [![Docker Pulls](https://img.shields.io/docker/pulls/alcounit/seleniferous.svg)](https://hub.docker.com/r/alcounit/seleniferous)
 
 # seleniferous
 A sidecar proxy that runs inside the browser pod. It handles session creation and traffic routing, and shuts down the pod when a session expires or times out.
