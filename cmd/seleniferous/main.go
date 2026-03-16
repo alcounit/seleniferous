@@ -44,7 +44,7 @@ func main() {
 	})
 	defer mgr.Stop(cfg.IPUUID)
 
-	store := store.NewDefaultStore()
+	store := store.NewDefaultStore[string]()
 	svc := service.NewService(cfg, store, mgr, broadcaster)
 
 	router := chi.NewRouter()
@@ -104,24 +104,34 @@ func main() {
 		}
 	}()
 
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		sub := broadcaster.Subscribe()
 		defer broadcaster.Unsubscribe(sub)
 
-		for event := range sub {
-			if event.Type == service.EventTypeError || event.Type == service.EventTypeDeleted || event.Type == service.EventTypeTimedout {
-				log.Info().Interface("event", event).Msg("critical event received")
-				select {
-				case stopCh <- syscall.SIGTERM:
-				default:
-				}
+		for {
+			select {
+			case <-ctx.Done():
 				return
+			case event, ok := <-sub:
+				if !ok {
+					return
+				}
+				if event.Type == service.EventTypeError || event.Type == service.EventTypeDeleted || event.Type == service.EventTypeTimedout {
+					log.Info().Interface("event", event).Msg("critical event received")
+					select {
+					case stopCh <- syscall.SIGTERM:
+					default:
+					}
+					return
+				}
 			}
 		}
 	}()
 
 	<-stopCh
 	log.Info().Msg("Shutting down HTTP server...")
+	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
@@ -129,8 +139,6 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatal().Err(err).Msg("HTTP server shutdown error")
 	}
-
-	os.Exit(1)
 }
 
 func loadConfig() (service.ServiceConfig, string, time.Duration, error) {
@@ -160,16 +168,6 @@ func loadConfig() (service.ServiceConfig, string, time.Duration, error) {
 		return cfg, "", sessionIdleTimeout, err
 	}
 	cfg.IPUUID = ipUUID.String()
-
-	if addr == "" {
-		return cfg, "", sessionIdleTimeout,
-			errors.New("LISTEN_ADDR must be provided")
-	}
-
-	if cfg.BrowserPort == "" {
-		return cfg, "", sessionIdleTimeout,
-			errors.New("BROWSER_PORT must be provided")
-	}
 
 	return cfg, addr, sessionIdleTimeout, nil
 }

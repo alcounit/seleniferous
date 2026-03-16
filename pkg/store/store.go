@@ -4,55 +4,55 @@ import (
 	"sync"
 )
 
-type Store interface {
-	Set(key string, val any)
-	Get(key string) (val any, ok bool)
+type Store[V any] interface {
+	Set(key string, val V)
+	Get(key string) (val V, ok bool)
 	Delete(key string)
 	Len() int
-	List() []any
+	List() []V
 }
 
-type DefaultStore struct {
+type DefaultStore[V any] struct {
 	mu   sync.RWMutex
-	data map[string]any
+	data map[string]V
 }
 
-func NewDefaultStore() Store {
-	return &DefaultStore{
-		data: make(map[string]any),
+func NewDefaultStore[V any]() Store[V] {
+	return &DefaultStore[V]{
+		data: make(map[string]V),
 	}
 }
 
-func (s *DefaultStore) Set(key string, val any) {
+func (s *DefaultStore[V]) Set(key string, val V) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data[key] = val
 }
 
-func (s *DefaultStore) Get(key string) (val any, ok bool) {
+func (s *DefaultStore[V]) Get(key string) (val V, ok bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	val, ok = s.data[key]
 	return
 }
 
-func (s *DefaultStore) Delete(key string) {
+func (s *DefaultStore[V]) Delete(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.data, key)
 }
 
-func (s *DefaultStore) Len() int {
+func (s *DefaultStore[V]) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.data)
 }
 
-func (s *DefaultStore) List() []any {
+func (s *DefaultStore[V]) List() []V {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	out := make([]any, 0, len(s.data))
+	out := make([]V, 0, len(s.data))
 	for _, v := range s.data {
 		out = append(out, v)
 	}

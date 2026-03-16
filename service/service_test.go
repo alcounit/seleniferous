@@ -26,7 +26,7 @@ import (
 )
 
 func TestCreateSessionStoreNotEmpty(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("x", "y")
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -41,7 +41,7 @@ func TestCreateSessionStoreNotEmpty(t *testing.T) {
 }
 
 func TestCreateSessionNilBody(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodPost, "/session", nil, map[string]string{}, "")
@@ -56,7 +56,7 @@ func TestCreateSessionNilBody(t *testing.T) {
 }
 
 func TestCreateSessionWaitFails(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{BrowserPort: "4444", SessionCreateTimeout: 20 * time.Millisecond}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -78,7 +78,7 @@ func TestCreateSessionWaitFails(t *testing.T) {
 }
 
 func TestCreateSessionSuccess(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	rec := &fakeBroadcaster{}
 	cfg := ServiceConfig{
 		IPUUID:               "fake",
@@ -140,7 +140,7 @@ func TestCreateSessionSuccess(t *testing.T) {
 }
 
 func TestCreateSessionRemovesSelenosisOptionsFromRequest(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	cfg := ServiceConfig{
 		IPUUID:               "fake",
 		BrowserPort:          "4444",
@@ -187,7 +187,7 @@ func TestCreateSessionRemovesSelenosisOptionsFromRequest(t *testing.T) {
 }
 
 func TestCreateSessionUsesRetryConfig(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	cfg := ServiceConfig{
 		IPUUID:               "fake",
 		BrowserPort:          "4444",
@@ -232,7 +232,7 @@ func TestCreateSessionUsesRetryConfig(t *testing.T) {
 }
 
 func TestCreateSessionZeroRetries(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	cfg := ServiceConfig{
 		BrowserPort:          "4444",
 		SessionCreateTimeout: 100 * time.Millisecond,
@@ -269,7 +269,7 @@ func TestCreateSessionZeroRetries(t *testing.T) {
 }
 
 func TestCreateSessionResponseBodyNil(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -290,7 +290,7 @@ func TestCreateSessionResponseBodyNil(t *testing.T) {
 }
 
 func TestCreateSessionReadError(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	rec := &fakeBroadcaster{}
 	svc := NewService(ServiceConfig{BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}, st, session.NewManager(time.Second, nil), rec)
 
@@ -320,7 +320,7 @@ func TestCreateSessionReadError(t *testing.T) {
 }
 
 func TestCreateSessionInvalidJSON(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	rec := &fakeBroadcaster{}
 	svc := NewService(ServiceConfig{BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}, st, session.NewManager(time.Second, nil), rec)
 
@@ -346,7 +346,7 @@ func TestCreateSessionInvalidJSON(t *testing.T) {
 }
 
 func TestCreateSessionMissingSessionId(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	rec := &fakeBroadcaster{}
 	svc := NewService(ServiceConfig{BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}, st, session.NewManager(time.Second, nil), rec)
 
@@ -372,7 +372,7 @@ func TestCreateSessionMissingSessionId(t *testing.T) {
 }
 
 func TestCreateSessionUpdateSessionIdFails(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	rec := &fakeBroadcaster{}
 	svc := NewService(ServiceConfig{BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}, st, session.NewManager(time.Second, nil), rec)
 
@@ -398,8 +398,9 @@ func TestCreateSessionUpdateSessionIdFails(t *testing.T) {
 }
 
 func TestCreateSessionNonOKStatus(t *testing.T) {
-	st := store.NewDefaultStore()
-	svc := NewService(ServiceConfig{BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+	st := store.NewDefaultStore[string]()
+	rec := &fakeBroadcaster{}
+	svc := NewService(ServiceConfig{BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}, st, session.NewManager(time.Second, nil), rec)
 
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method == http.MethodHead {
@@ -412,14 +413,17 @@ func TestCreateSessionNonOKStatus(t *testing.T) {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
 		svc.CreateSession(rw, req)
-		if rw.status != http.StatusBadRequest {
-			t.Fatalf("expected status 400, got %d", rw.status)
+		if rw.status != http.StatusInternalServerError {
+			t.Fatalf("expected status 500, got %d", rw.status)
+		}
+		if len(rec.events) == 0 || rec.events[0].Type != EventTypeError {
+			t.Fatalf("expected error event, got %+v", rec.events)
 		}
 	})
 }
 
 func TestProxySessionUnknownSession(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{IPUUID: "fake"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodGet, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
@@ -433,7 +437,7 @@ func TestProxySessionUnknownSession(t *testing.T) {
 }
 
 func TestRouteHTTPMissingSessionId(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodGet, "/session/", nil, map[string]string{}, "/foo")
@@ -447,7 +451,7 @@ func TestRouteHTTPMissingSessionId(t *testing.T) {
 }
 
 func TestRouteHTTPUnknownSession(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodGet, "/session/fake/foo", nil, map[string]string{"sessionId": "fake"}, "/foo")
@@ -461,7 +465,7 @@ func TestRouteHTTPUnknownSession(t *testing.T) {
 }
 
 func TestRouteHTTPMissingRestPath(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -476,7 +480,7 @@ func TestRouteHTTPMissingRestPath(t *testing.T) {
 }
 
 func TestRouteHTTPNoMatchingRule(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -498,7 +502,7 @@ func TestRouteHTTPRuleApplied(t *testing.T) {
 		t.Fatalf("failed to load rules: %v", err)
 	}
 
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	cfg := ServiceConfig{Rules: rules}
 	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
@@ -528,7 +532,7 @@ func TestRouteHTTPRuleApplied(t *testing.T) {
 }
 
 func TestRouteVNCMissingSessionId(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodGet, "/vnc", nil, map[string]string{}, "")
@@ -542,7 +546,7 @@ func TestRouteVNCMissingSessionId(t *testing.T) {
 }
 
 func TestRouteVNCUnknownSession(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodGet, "/vnc/fake", nil, map[string]string{"sessionId": "fake"}, "")
@@ -556,7 +560,7 @@ func TestRouteVNCUnknownSession(t *testing.T) {
 }
 
 func TestRouteVNCUpgradeFails(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -567,7 +571,7 @@ func TestRouteVNCUpgradeFails(t *testing.T) {
 }
 
 func TestRouteVNCDialError(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -594,7 +598,7 @@ func TestRouteVNCDialError(t *testing.T) {
 }
 
 func TestRouteVNCProxy(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -657,7 +661,7 @@ func TestRouteVNCProxy(t *testing.T) {
 }
 
 func TestStoreSessionIdAndGetSessionId(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{IPUUID: "fake"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	svc.storeSessionId("orig")
@@ -666,10 +670,6 @@ func TestStoreSessionIdAndGetSessionId(t *testing.T) {
 		t.Fatalf("expected orig session, got %q (ok=%v)", got, ok)
 	}
 
-	st.Set("bad", 123)
-	if _, ok := svc.getSessionId("bad"); ok {
-		t.Fatal("expected false for non-string value")
-	}
 }
 
 func TestWriteErrorResponse(t *testing.T) {
@@ -704,7 +704,7 @@ func TestNotifyErrorAndDelete(t *testing.T) {
 }
 
 func TestProxySessionHTTP(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}
 	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
@@ -730,7 +730,7 @@ func TestProxySessionHTTP(t *testing.T) {
 		if gotReq == nil {
 			t.Fatal("expected request to reach transport")
 		}
-		if gotReq.URL.Host != "127.0.0.1" {
+		if !strings.Contains(gotReq.URL.Host, "localhost") {
 			t.Fatalf("unexpected host: %s", gotReq.URL.Host)
 		}
 		if !strings.Contains(gotReq.URL.Path, "orig") {
@@ -751,7 +751,7 @@ func TestProxySessionHTTP(t *testing.T) {
 }
 
 func TestProxySessionBodyUnmarshalFails(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -772,7 +772,7 @@ func TestProxySessionBodyUnmarshalFails(t *testing.T) {
 }
 
 func TestProxySessionNoBody(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -788,7 +788,7 @@ func TestProxySessionNoBody(t *testing.T) {
 }
 
 func TestProxySessionResponseBodyNil(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -804,7 +804,7 @@ func TestProxySessionResponseBodyNil(t *testing.T) {
 }
 
 func TestProxySessionRequestUpdateFails(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -825,7 +825,7 @@ func TestProxySessionRequestUpdateFails(t *testing.T) {
 }
 
 func TestProxySessionDeleteBranch(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	rec := &fakeBroadcaster{}
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), rec)
@@ -846,7 +846,7 @@ func TestProxySessionDeleteBranch(t *testing.T) {
 }
 
 func TestProxySessionResponseInvalidJSON(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -865,7 +865,7 @@ func TestProxySessionResponseInvalidJSON(t *testing.T) {
 }
 
 func TestProxySessionWebSocketPath(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -885,7 +885,7 @@ func TestProxySessionWebSocketCallbacks(t *testing.T) {
 	port, received, shutdown := startWebSocketEchoServer(t)
 	defer shutdown()
 
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: port}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -932,7 +932,7 @@ func TestProxySessionWebSocketCallbacks(t *testing.T) {
 }
 
 func TestProxyPlaywrightMissingIPUUID(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodGet, "/playwright", nil, nil, "")
@@ -946,7 +946,7 @@ func TestProxyPlaywrightMissingIPUUID(t *testing.T) {
 }
 
 func TestProxyPlaywrightUnknownIPUUID(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=other", nil, nil, "")
@@ -960,7 +960,7 @@ func TestProxyPlaywrightUnknownIPUUID(t *testing.T) {
 }
 
 func TestProxyPlaywrightStoresSessionWhenMissing(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{
 		IPUUID:               "fake",
 		BrowserPort:          "4444",
@@ -981,7 +981,7 @@ func TestProxyPlaywrightStoresSessionWhenMissing(t *testing.T) {
 }
 
 func TestProxyPlaywrightKeepsExistingSession(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{
 		IPUUID:               "fake",
@@ -1006,7 +1006,7 @@ func TestProxyPlaywrightWebSocketCallbacks(t *testing.T) {
 	port, received, shutdown := startWebSocketEchoServer(t)
 	defer shutdown()
 
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	rec := &fakeBroadcaster{}
 	svc := NewService(ServiceConfig{
 		IPUUID:               "fake",
@@ -1179,7 +1179,7 @@ type fakeBroadcaster struct {
 	events []Event
 }
 
-func (f *fakeBroadcaster) Subscribe() chan Event {
+func (f *fakeBroadcaster) Subscribe(_ ...func(Event) bool) chan Event {
 	return nil
 }
 
@@ -1523,7 +1523,7 @@ func TestExternalBaseURLFromHeadersURL(t *testing.T) {
 }
 
 func TestCreateSessionBodyReadError(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodPost, "/session", io.NopCloser(errorReader{}), nil, "")
@@ -1537,7 +1537,7 @@ func TestCreateSessionBodyReadError(t *testing.T) {
 }
 
 func TestCreateSessionInvalidRequestBody(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString("{invalid"), nil, "")
@@ -1551,7 +1551,7 @@ func TestCreateSessionInvalidRequestBody(t *testing.T) {
 }
 
 func TestProxySessionResponseBodyNilInModifier(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -1571,7 +1571,7 @@ func TestProxySessionResponseBodyNilInModifier(t *testing.T) {
 }
 
 func TestRouteVNCNormalClose(t *testing.T) {
-	st := store.NewDefaultStore()
+	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sync"
 	"time"
 
 	logctx "github.com/alcounit/browser-controller/pkg/log"
@@ -39,7 +40,7 @@ var (
 		rw.WriteHeader(http.StatusInternalServerError)
 	}
 
-	localHost = "127.0.0.1"
+	localHost = "localhost"
 
 	defaultSleepTimeout       = 3 * time.Second
 	defaultSessionWaitTimeout = 10 * time.Second
@@ -55,13 +56,13 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	store       store.Store
+	store       store.Store[string]
 	manager     *session.Manager
 	broadcaster broadcast.Broadcaster[Event]
 	config      ServiceConfig
 }
 
-func NewService(config ServiceConfig, store store.Store, mgr *session.Manager, broadcaster broadcast.Broadcaster[Event]) *Service {
+func NewService(config ServiceConfig, store store.Store[string], mgr *session.Manager, broadcaster broadcast.Broadcaster[Event]) *Service {
 	return &Service{
 		store:       store,
 		manager:     mgr,
@@ -122,7 +123,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 	log.Info().Msg("proxying session create request")
 
 	requestModifier := func(r *http.Request) {
-		r.Host = localHost
+		r.Host = url.Host
 		r.URL = url
 
 		r.Header.Set("Content-Type", "application/json")
@@ -137,13 +138,15 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 	responseModifier := func(r *http.Response) error {
 
 		if r.StatusCode != http.StatusOK && r.StatusCode != http.StatusCreated {
-			log.Err(errSessionCreate).Int("statusCode", r.StatusCode).Msg("unexpected status code")
-			return nil
+			log.Err(errSessionCreate).Int("statusCode", r.StatusCode).Msg("unexpected status code, session not created")
+			notifyError(s.broadcaster, "unexpected status code", errSessionCreate)
+			return errSessionCreate
 		}
 
 		if r.Body == nil {
-			log.Err(errSessionCreate).Msg("response body is empty")
+			log.Err(errSessionCreate).Msg("response body is empty, session not created")
 			r.Body = io.NopCloser(bytes.NewReader(nil))
+			notifyError(s.broadcaster, "response body is empty", errSessionCreate)
 			return errSessionCreate
 		}
 
@@ -277,10 +280,11 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 
 			if r.Body != nil {
 				body, err := io.ReadAll(r.Body)
+				_ = r.Body.Close()
+				r.Body = io.NopCloser(bytes.NewReader(body))
 				if err != nil {
 					return
 				}
-				_ = r.Body.Close()
 
 				origBody := body
 
@@ -313,7 +317,7 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 				s.config.IPUUID: originalSessionId,
 			}),
 		}
-		r.Host = localHost
+		r.Host = r.URL.Host
 
 		log.Info().Str("sessionId", requestSessionId).Str("browserAddr", r.URL.String()).Msg("session proxy request modified")
 	}
@@ -480,10 +484,12 @@ func (s *Service) RouteVNC(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if _, ok := s.store.Get(sessionId); !ok {
-		log.Error().Str("sessionId", sessionId).Interface("list", s.store.List()).Msg("unknown sessionId")
-		http.Error(rw, "unknown sessionId", http.StatusInternalServerError)
-		return
+	if sessionId != s.config.IPUUID {
+		if _, ok := s.store.Get(sessionId); !ok {
+			log.Error().Str("sessionId", sessionId).Interface("list", s.store.List()).Msg("unknown sessionId")
+			http.Error(rw, "unknown sessionId", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	upgrader := websocket.Upgrader{
@@ -508,27 +514,42 @@ func (s *Service) RouteVNC(rw http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithCancel(req.Context())
 	defer cancel()
 
-	errCh := make(chan error, 2)
+	var (
+		wg       sync.WaitGroup
+		firstErr error
+		once     sync.Once
+	)
+
+	setErr := func(err error) {
+		once.Do(func() {
+			firstErr = err
+			cancel()
+		})
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-ctx.Done()
+		_ = conn.SetDeadline(time.Now())
+		_ = wsconn.SetReadDeadline(time.Now())
+	}()
 
 	log.Info().Str("sessionId", sessionId).Msg("proxying vnc request")
 
-	go func() {
-		defer cancel()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
+	wg.Add(2)
 
+	go func() {
+		defer wg.Done()
+		for {
 			mt, data, err := wsconn.ReadMessage()
 			if err != nil {
-				errCh <- err
+				setErr(err)
 				return
 			}
 			if mt == websocket.BinaryMessage {
 				if _, err := conn.Write(data); err != nil {
-					errCh <- err
+					setErr(err)
 					return
 				}
 			}
@@ -536,28 +557,23 @@ func (s *Service) RouteVNC(rw http.ResponseWriter, req *http.Request) {
 	}()
 
 	go func() {
-		defer cancel()
+		defer wg.Done()
 		buf := make([]byte, 32*1024)
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
 			n, err := conn.Read(buf)
 			if err != nil {
-				errCh <- err
+				setErr(err)
 				return
 			}
 			if err := wsconn.WriteMessage(websocket.BinaryMessage, buf[:n]); err != nil {
-				errCh <- err
+				setErr(err)
 				return
 			}
 		}
 	}()
 
-	err = <-errCh
+	wg.Wait()
+	err = firstErr
 	if websocket.IsCloseError(err,
 		websocket.CloseNormalClosure,
 		websocket.CloseGoingAway,
@@ -574,12 +590,7 @@ func (s *Service) storeSessionId(val string) {
 }
 
 func (s *Service) getSessionId(key string) (string, bool) {
-	val, ok := s.store.Get(key)
-	if !ok {
-		return "", false
-	}
-
-	str, ok := val.(string)
+	str, ok := s.store.Get(key)
 	if !ok {
 		return "", false
 	}
