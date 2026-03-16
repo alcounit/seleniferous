@@ -3,7 +3,7 @@ package store
 import "testing"
 
 func TestDefaultStoreSetGetDeleteLenList(t *testing.T) {
-	s := NewDefaultStore()
+	s := NewDefaultStore[any]()
 
 	if got := s.Len(); got != 0 {
 		t.Fatalf("expected empty store, got len=%d", got)
