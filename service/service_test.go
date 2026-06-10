@@ -436,6 +436,417 @@ func TestProxySessionUnknownSession(t *testing.T) {
 	}
 }
 
+func TestProxyMcpMissingSessionId(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	svc := NewService(ServiceConfig{IPUUID: "fake"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodGet, "/mcp/", nil, map[string]string{}, "")
+	rw := httptestRecorder()
+
+	svc.ProxyMcp(rw, req)
+
+	assertMcpError(t, rw, http.StatusBadRequest, -32602)
+}
+
+func TestProxyMcpUnknownSessionId(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	svc := NewService(ServiceConfig{IPUUID: "fake"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodPost, "/mcp/other", nil, map[string]string{}, "")
+	req.Header.Set("Mcp-Session-Id", "other")
+	rw := httptestRecorder()
+
+	svc.ProxyMcp(rw, req)
+
+	assertMcpError(t, rw, http.StatusNotFound, -32001)
+}
+
+func TestProxyMcpSessionNotInStore(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	svc := NewService(ServiceConfig{IPUUID: "fake"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodGet, "/mcp/fake", nil, map[string]string{}, "")
+	req.Header.Set("Mcp-Session-Id", "fake")
+	rw := httptestRecorder()
+
+	svc.ProxyMcp(rw, req)
+
+	assertMcpError(t, rw, http.StatusNotFound, -32001)
+}
+
+func TestProxyMcpPostToMcp(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	var gotReq *http.Request
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodHead {
+			return response(http.StatusOK, ""), nil
+		}
+		gotReq = req
+		return response(http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":{}}`), nil
+	})
+
+	withDefaultTransports(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp", bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`), nil, "")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if gotReq == nil {
+			t.Fatal("expected request to reach transport")
+		}
+		if gotReq.URL.Path != "/mcp" {
+			t.Fatalf("expected path /mcp, got %s", gotReq.URL.Path)
+		}
+		if !strings.Contains(gotReq.Host, "localhost") {
+			t.Fatalf("expected Host header with localhost, got %s", gotReq.Host)
+		}
+	})
+}
+
+func TestProxyMcpGetToMcp(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	var gotReq *http.Request
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotReq = req
+		return response(http.StatusOK, "{}"), nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodGet, "/mcp/fake", nil, map[string]string{}, "")
+		req.Header.Set("Mcp-Session-Id", "fake")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if gotReq == nil {
+			t.Fatal("expected request to reach transport")
+		}
+		if gotReq.URL.Path != "/mcp" {
+			t.Fatalf("expected path /mcp, got %s", gotReq.URL.Path)
+		}
+	})
+}
+
+func TestProxyMcpPreservesQueryParams(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	var gotReq *http.Request
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodHead {
+			return response(http.StatusOK, ""), nil
+		}
+		gotReq = req
+		return response(http.StatusOK, "{}"), nil
+	})
+
+	withDefaultTransports(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp/fake?foo=bar&baz=qux", nil, map[string]string{"sessionId": "fake"}, "")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if gotReq == nil {
+			t.Fatal("expected request to reach transport")
+		}
+		if gotReq.URL.RawQuery != "foo=bar&baz=qux" {
+			t.Fatalf("expected query params preserved, got %q", gotReq.URL.RawQuery)
+		}
+	})
+}
+
+func TestProxyMcpStoresSessionWhenMissing(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodHead {
+			return response(http.StatusOK, ""), nil
+		}
+		resp := response(http.StatusOK, "{}")
+		resp.Header.Set("Mcp-Session-Id", "real-session")
+		return resp, nil
+	})
+
+	withDefaultTransports(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp/fake", nil, map[string]string{"sessionId": "fake"}, "")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if got, ok := st.Get("fake"); !ok || got != "real-session" {
+			t.Fatalf("expected store mapping fake->real-session, got %v (ok=%v)", got, ok)
+		}
+		if rw.Header().Get("Mcp-Session-Id") != "fake" {
+			t.Fatalf("expected response Mcp-Session-Id rewritten to fake, got %q", rw.Header().Get("Mcp-Session-Id"))
+		}
+	})
+}
+
+func TestProxyMcpKeepsExistingSession(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return response(http.StatusOK, "{}"), nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp/fake", nil, map[string]string{"sessionId": "fake"}, "")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if got, ok := st.Get("fake"); !ok || got != "orig" {
+			t.Fatalf("expected existing mapping fake->orig, got %v (ok=%v)", got, ok)
+		}
+	})
+}
+
+func TestProxyMcpRewritesRequestSessionId(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	var gotReq *http.Request
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotReq = req
+		return response(http.StatusOK, "{}"), nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp/fake", nil, map[string]string{}, "")
+		req.Header.Set("Mcp-Session-Id", "fake")
+		req.Header.Set("Content-Type", "application/json")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if gotReq == nil {
+			t.Fatal("expected request to reach transport")
+		}
+		if gotReq.Header.Get("Mcp-Session-Id") != "orig" {
+			t.Fatalf("expected Mcp-Session-Id rewritten to orig, got %q", gotReq.Header.Get("Mcp-Session-Id"))
+		}
+		if gotReq.Header.Get("Content-Type") != "application/json" {
+			t.Fatalf("expected Content-Type preserved, got %q", gotReq.Header.Get("Content-Type"))
+		}
+	})
+}
+
+func TestProxyMcpRewritesResponseSessionId(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		resp := response(http.StatusOK, "{}")
+		resp.Header.Set("Mcp-Session-Id", "orig")
+		return resp, nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp/fake", nil, map[string]string{}, "")
+		req.Header.Set("Mcp-Session-Id", "fake")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if rw.Header().Get("Mcp-Session-Id") != "fake" {
+			t.Fatalf("expected response Mcp-Session-Id rewritten to fake, got %q", rw.Header().Get("Mcp-Session-Id"))
+		}
+	})
+}
+
+func TestProxyMcpDeleteNotifiesDelete(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}
+	rec := &fakeBroadcaster{}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), rec)
+
+	var gotReq *http.Request
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotReq = req
+		return response(http.StatusOK, "{}"), nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodDelete, "/mcp/fake", nil, map[string]string{}, "")
+		req.Header.Set("Mcp-Session-Id", "fake")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if gotReq == nil {
+			t.Fatal("expected request to reach transport")
+		}
+		if gotReq.Method != http.MethodDelete {
+			t.Fatalf("expected DELETE method, got %s", gotReq.Method)
+		}
+		if gotReq.URL.Path != "/mcp" {
+			t.Fatalf("expected path /mcp, got %s", gotReq.URL.Path)
+		}
+
+		time.Sleep(defaultSleepTimeout + 500*time.Millisecond)
+
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		found := false
+		for _, e := range rec.events {
+			if e.Type == EventTypeDeleted {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatal("expected EventTypeDeleted to be broadcast after DELETE")
+		}
+	})
+}
+
+func TestProxyMcpDeleteDoesNotNotifyOnOtherMethods(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}
+	rec := &fakeBroadcaster{}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), rec)
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return response(http.StatusOK, "{}"), nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp/fake", nil, map[string]string{"sessionId": "fake"}, "")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		time.Sleep(defaultSleepTimeout + 500*time.Millisecond)
+
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		for _, e := range rec.events {
+			if e.Type == EventTypeDeleted {
+				t.Fatal("unexpected EventTypeDeleted for POST request")
+			}
+		}
+	})
+}
+
+func TestProxyMcpInitUnexpectedStatus(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444", SessionCreateTimeout: 100 * time.Millisecond}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodHead {
+			return response(http.StatusOK, ""), nil
+		}
+		return response(http.StatusInternalServerError, "boom"), nil
+	})
+
+	withDefaultTransports(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp/", bytes.NewBufferString(`{}`), map[string]string{}, "")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		assertMcpError(t, rw, http.StatusInternalServerError, -32603)
+		if _, ok := st.Get("fake"); ok {
+			t.Fatal("expected no session stored on failed init")
+		}
+	})
+}
+
+func TestProxyMcpInitWaitTimeout(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444", SessionCreateTimeout: 20 * time.Millisecond}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("connection refused")
+	})
+
+	withDefaultTransports(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp/", bytes.NewBufferString(`{}`), map[string]string{}, "")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		assertMcpError(t, rw, http.StatusServiceUnavailable, -32603)
+		if _, ok := st.Get("fake"); ok {
+			t.Fatal("expected no session stored on wait timeout")
+		}
+	})
+}
+
+func TestProxyMcpAlreadyStarted(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+	svc := NewService(ServiceConfig{IPUUID: "fake"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	req := newRequestWithParams(http.MethodPost, "/mcp", bytes.NewBufferString(`{}`), nil, "")
+	rw := httptestRecorder()
+
+	svc.ProxyMcp(rw, req)
+
+	assertMcpError(t, rw, http.StatusBadRequest, -32600)
+}
+
+func TestMcpErrorHandler(t *testing.T) {
+	rw := httptestRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	mcpErrorHandler(rw, req, errors.New("boom"))
+
+	assertMcpError(t, rw, http.StatusInternalServerError, -32603)
+}
+
+func assertMcpError(t *testing.T, rw *recorder, wantStatus, wantCode int) {
+	t.Helper()
+	if rw.status != wantStatus {
+		t.Fatalf("expected status %d, got %d", wantStatus, rw.status)
+	}
+	if ct := rw.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("expected Content-Type application/json, got %q", ct)
+	}
+	var body struct {
+		JSONRPC string `json:"jsonrpc"`
+		ID      any    `json:"id"`
+		Error   struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rw.body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode JSON-RPC error body %q: %v", rw.body.String(), err)
+	}
+	if body.JSONRPC != "2.0" {
+		t.Fatalf("expected jsonrpc 2.0, got %q", body.JSONRPC)
+	}
+	if body.ID != nil {
+		t.Fatalf("expected id null, got %v", body.ID)
+	}
+	if body.Error.Code != wantCode {
+		t.Fatalf("expected error code %d, got %d", wantCode, body.Error.Code)
+	}
+	if body.Error.Message == "" {
+		t.Fatal("expected non-empty error message")
+	}
+}
+
 func TestRouteHTTPMissingSessionId(t *testing.T) {
 	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
@@ -674,7 +1085,7 @@ func TestStoreSessionIdAndGetSessionId(t *testing.T) {
 
 func TestWriteErrorResponse(t *testing.T) {
 	rw := httptestRecorder()
-	writeErrorResponse(rw, http.StatusBadRequest, errors.New("bad"))
+	writeErrorResponse(rw, http.StatusBadRequest, selenium.ErrSessionNotCreated(errors.New("bad")))
 
 	if rw.status != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rw.status)
@@ -682,8 +1093,16 @@ func TestWriteErrorResponse(t *testing.T) {
 	if got := rw.header.Get("Content-Type"); got != "application/json" {
 		t.Fatalf("expected Content-Type application/json, got %q", got)
 	}
-	if rw.body.Len() == 0 {
-		t.Fatal("expected non-empty response body")
+
+	var body selenium.SeleniumError
+	if err := json.Unmarshal(rw.body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode body %q: %v", rw.body.String(), err)
+	}
+	if body.Value.Name != "session not created" {
+		t.Fatalf("expected error name 'session not created', got %q", body.Value.Name)
+	}
+	if !strings.Contains(body.Value.Message, "bad") {
+		t.Fatalf("expected message to contain root cause, got %q", body.Value.Message)
 	}
 }
 
@@ -730,7 +1149,7 @@ func TestProxySessionHTTP(t *testing.T) {
 		if gotReq == nil {
 			t.Fatal("expected request to reach transport")
 		}
-		if !strings.Contains(gotReq.URL.Host, "localhost") {
+		if !strings.Contains(gotReq.URL.Host, "127.0.0.1") {
 			t.Fatalf("unexpected host: %s", gotReq.URL.Host)
 		}
 		if !strings.Contains(gotReq.URL.Path, "orig") {
