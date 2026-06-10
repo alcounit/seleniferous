@@ -78,6 +78,10 @@ func main() {
 
 	router.With(createTimeoutMiddleWare).Get("/playwright", svc.ProxyPlaywright)
 
+	router.With(createTimeoutMiddleWare).Post("/mcp", svc.ProxyMcp)
+	router.With(createTimeoutMiddleWare).Get("/mcp", svc.ProxyMcp)
+	router.With(createTimeoutMiddleWare).Delete("/mcp", svc.ProxyMcp)
+
 	router.Route("/selenosis/v1", func(r chi.Router) {
 		r.Route("/sessions/{sessionId}/proxy", func(r chi.Router) {
 			r.HandleFunc("/http/*", svc.RouteHTTP)

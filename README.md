@@ -36,6 +36,9 @@ Seleniferous exposes Selenium-compatible endpoints on `/session` and internal pr
 | `POST` | `/session` | Create a new WebDriver session (proxied to local browser). |
 | `*` | `/session/{sessionId}/*` | Proxy all session traffic (HTTP and WebSocket). |
 | `WS` | `/playwright` | Proxies WS traffic. |
+| `POST` | `/mcp` | MCP Streamable HTTP transport — client requests (proxied to local browser `/mcp`). |
+| `GET` | `/mcp` | MCP Streamable HTTP transport — server-initiated messages (proxied to local browser `/mcp`). |
+| `DELETE` | `/mcp` | Terminate the MCP session; schedules browser teardown. |
 | `*` | `/selenosis/v1/sessions/{sessionId}/proxy/http/*` | Internal HTTP proxy used by Selenosis. |
 | `GET` | `/selenosis/v1/vnc/{sessionId}` | Internal VNC proxy used by Selenosis. |
 
@@ -106,6 +109,23 @@ A request to `/selenosis/v1/sessions/<sessionId>/proxy/http/json?file=somefile.t
 
 Multiple rules are evaluated in order; the first match is used.
 
+## MCP (experimental)
+
+Seleniferous proxies [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) **Streamable HTTP** traffic to an MCP server running inside the browser container on `BROWSER_PORT`. It is exposed on a single endpoint `/mcp` (`POST`, `GET`, `DELETE`).
+
+Sessions are identified by the `Mcp-Session-Id` header, which must equal the pod-derived UUID (`IPUUID`).
+
+- **Initialize** — `POST /mcp` without `Mcp-Session-Id` starts the upstream MCP session. Seleniferous stores the mapping `IPUUID -> <browser session id>` and returns `IPUUID` to the client in the `Mcp-Session-Id` response header. Only one MCP session per pod is allowed.
+- **Proxied requests** — `POST`/`GET /mcp` with `Mcp-Session-Id: <IPUUID>` are forwarded to `/mcp` on the browser. Seleniferous rewrites the header to the real browser session id on the way in, and back to `IPUUID` on the way out.
+- **Terminate** — `DELETE /mcp` ends the session and schedules teardown of the browser pod.
+
+Error responses for non-initialize requests:
+
+- a missing `Mcp-Session-Id` header returns **`400`**;
+- a header that does not match the pod `IPUUID`, or whose MCP session is not in the store, returns **`404`** so the client can `initialize` a fresh session.
+
+Request and response **bodies** are forwarded unchanged; only the `Mcp-Session-Id` header is rewritten. Each MCP request resets the session idle timeout, same as Selenium and Playwright traffic.
+
 ## Networking and headers
 If you run behind a reverse proxy or ingress, set these headers so Seleniferous can build correct external URLs:
 - `X-Forwarded-Proto`
@@ -120,12 +140,14 @@ The project is built and packaged entirely via Docker. Local Go installation is 
 
 The build process is controlled via the following Makefile variables:
 
-Variable	Description
-- BINARY_NAME	Name of the produced binary (seleniferous).
-- REGISTRY	Docker registry prefix (default: localhost:5000).
-- IMAGE_NAME	Full image name (<registry>/seleniferous).
-- VERSION	Image version/tag (default: develop).
-- PLATFORM	Target platform (default: linux/amd64).
-- CONTAINER_TOOL docker cmd
+| Variable         | Description                                                  |
+|------------------|--------------------------------------------------------------|
+| `BINARY_NAME`    | Name of the produced binary (fixed: `seleniferous`)         |
+| `REGISTRY`       | Docker registry prefix (default: `localhost:5000`)           |
+| `IMAGE_NAME`     | Full image name, derived as `$(REGISTRY)/$(BINARY_NAME)`     |
+| `VERSION`        | Image version/tag (default: `develop`)                       |
+| `EXTRA_TAGS`     | Additional `-t` tags passed to `docker-push` (default: none) |
+| `PLATFORM`       | Target platform (default: `linux/amd64`)                     |
+| `CONTAINER_TOOL` | Container build tool (default: `docker`)                     |
 
-REGISTRY, VERSION is expected to be provided externally, which allows the same Makefile to be used locally and in CI.
+`REGISTRY` and `VERSION` are expected to be provided externally, which allows the same Makefile to be used locally and in CI.

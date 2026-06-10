@@ -20,6 +20,7 @@ import (
 	"github.com/alcounit/seleniferous/v2/pkg/pathutils"
 	"github.com/alcounit/seleniferous/v2/pkg/session"
 	"github.com/alcounit/seleniferous/v2/pkg/store"
+	"github.com/alcounit/selenosis/v2/pkg/jsonrpc"
 	"github.com/alcounit/selenosis/v2/pkg/proxy"
 	"github.com/alcounit/selenosis/v2/pkg/proxy/rule"
 	"github.com/alcounit/selenosis/v2/pkg/selenium"
@@ -33,14 +34,21 @@ var (
 
 	dialTCP = net.Dial
 
-	errorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+	defaultErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
 		log := logctx.FromContext(req.Context())
 		log.Err(err).Msg("proxy error")
 
 		rw.WriteHeader(http.StatusInternalServerError)
 	}
 
-	localHost = "localhost"
+	mcpErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+		log := logctx.FromContext(req.Context())
+		log.Err(err).Msg("mcp proxy error")
+		jsonrpc.WriteError(rw, http.StatusInternalServerError, jsonrpc.InternalError, "Internal error")
+	}
+
+	loopbackAddr = "127.0.0.1"
+	localhost    = "localhost"
 
 	defaultSleepTimeout       = 3 * time.Second
 	defaultSessionWaitTimeout = 10 * time.Second
@@ -76,27 +84,29 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 
 	if s.store.Len() > 0 {
 		log.Err(errSessionCreate).Msg("session already started")
-		writeErrorResponse(rw, http.StatusBadRequest, errSessionCreate)
+		writeErrorResponse(rw, http.StatusBadRequest, selenium.ErrSessionNotCreated(errSessionCreate))
 		return
 	}
 
+	s.manager.Touch(s.config.IPUUID)
+
 	if req.Body == nil {
 		log.Err(errSessionCreate).Msg("request body is nil")
-		writeErrorResponse(rw, http.StatusBadRequest, errSessionCreate)
+		writeErrorResponse(rw, http.StatusBadRequest, selenium.ErrInvalidArgument(errSessionCreate))
 		return
 	}
 
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		log.Err(errSessionCreate).Msg("failed to read request body")
-		writeErrorResponse(rw, http.StatusBadRequest, errSessionCreate)
+		writeErrorResponse(rw, http.StatusBadRequest, selenium.ErrInvalidArgument(errSessionCreate))
 		return
 	}
 
 	var caps selenium.Capabilities
 	if err := json.Unmarshal(body, &caps); err != nil {
 		log.Err(err).Msg("failed to decode request body")
-		writeErrorResponse(rw, http.StatusBadRequest, errSessionCreate)
+		writeErrorResponse(rw, http.StatusBadRequest, selenium.ErrInvalidArgument(errSessionCreate))
 		return
 	}
 
@@ -104,19 +114,19 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 	body, err = json.Marshal(caps)
 	if err != nil {
 		log.Err(err).Msg("failed to encode request body")
-		writeErrorResponse(rw, http.StatusInternalServerError, errSessionCreate)
+		writeErrorResponse(rw, http.StatusInternalServerError, selenium.ErrSessionNotCreated(errSessionCreate))
 		return
 	}
 
 	url := &url.URL{
 		Scheme: "http",
-		Host:   net.JoinHostPort(localHost, s.config.BrowserPort),
+		Host:   net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
 		Path:   req.URL.Path,
 	}
 
 	if err := wait(url.String(), s.config.SessionCreateTimeout); err != nil {
 		log.Err(err).Msg("browser service unavailable")
-		writeErrorResponse(rw, http.StatusServiceUnavailable, err)
+		writeErrorResponse(rw, http.StatusServiceUnavailable, selenium.Error("browser service unavailable", err))
 		return
 	}
 
@@ -144,7 +154,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		if r.Body == nil {
-			log.Err(errSessionCreate).Msg("response body is empty, session not created")
+			log.Err(errSessionCreate).Int("statusCode", r.StatusCode).Msg("response body is empty, session not created")
 			r.Body = io.NopCloser(bytes.NewReader(nil))
 			notifyError(s.broadcaster, "response body is empty", errSessionCreate)
 			return errSessionCreate
@@ -152,7 +162,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			log.Err(err).Msg("failed to read response body")
+			log.Err(err).Int("statusCode", r.StatusCode).Msg("failed to read response body")
 			notifyError(s.broadcaster, "failed to read response body", err)
 			return err
 		}
@@ -160,20 +170,20 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 
 		var response selenium.Payload
 		if err := json.Unmarshal(body, &response); err != nil {
-			log.Err(err).Msg("failed to decode response body")
+			log.Err(err).Int("statusCode", r.StatusCode).Msg("failed to decode response body")
 			notifyError(s.broadcaster, "failed to decode response body", err)
 			return err
 		}
 
 		originalSessionId, ok := response.GetSessionId()
 		if !ok {
-			log.Err(errSessionNotFound).Msg("response sessionId not found")
+			log.Err(errSessionNotFound).Int("statusCode", r.StatusCode).Msg("response sessionId not found")
 			notifyError(s.broadcaster, "response sessionId not found", errSessionNotFound)
 			return errSessionCreate
 		}
 
 		if ok := response.UpdateSessionId(s.config.IPUUID); !ok {
-			log.Err(errSessionCreate).Msg("failed to update sessionId in response")
+			log.Err(errSessionCreate).Int("statusCode", r.StatusCode).Msg("failed to update sessionId in response")
 			notifyError(s.broadcaster, "failed to update sessionId in response", errSessionCreate)
 			return errSessionCreate
 		}
@@ -185,7 +195,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 
 		body, err = json.Marshal(response)
 		if err != nil {
-			log.Err(err).Msg("failed to encode response body")
+			log.Err(err).Int("statusCode", r.StatusCode).Msg("failed to encode response body")
 			notifyError(s.broadcaster, "failed to encode response body", err)
 			return err
 		}
@@ -193,14 +203,14 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 		s.storeSessionId(originalSessionId)
 		s.manager.Touch(s.config.IPUUID)
 
-		log.Info().Str("originalSessionId", originalSessionId).Str("fakeSessionId", s.config.IPUUID).Msg("session id rewritten")
+		log.Info().Int("statusCode", r.StatusCode).Str("originalSessionId", originalSessionId).Str("fakeSessionId", s.config.IPUUID).Msg("session id rewritten")
 
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		r.ContentLength = int64(len(body))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Del("Content-Length")
 
-		log.Info().Str("sessionId", originalSessionId).Msg("session create response modified")
+		log.Info().Int("statusCode", r.StatusCode).Str("sessionId", originalSessionId).Msg("session create response modified")
 
 		return nil
 	}
@@ -214,7 +224,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 		proxy.WithTransport(transport),
 		proxy.WithRequestModifier(requestModifier),
 		proxy.WithResponseModifier(responseModifier),
-		proxy.WithErrorHandler(errorHandler),
+		proxy.WithErrorHandler(defaultErrorHandler),
 	)
 
 	rp.ServeHTTP(rw, req)
@@ -227,7 +237,7 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 	originalSessionId, ok := s.getSessionId(requestSessionId)
 	if !ok {
 		log.Err(errSessionNotFound).Msg("unknown sessionId")
-		writeErrorResponse(rw, http.StatusBadRequest, errSessionCreate)
+		writeErrorResponse(rw, http.StatusBadRequest, selenium.ErrInvalidSessionId(errSessionNotFound))
 		return
 	}
 
@@ -239,7 +249,7 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 		resolver := func(r *http.Request) (*url.URL, error) {
 			url := &url.URL{
 				Scheme: "ws",
-				Host:   net.JoinHostPort(localHost, s.config.BrowserPort),
+				Host:   net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
 				Path: pathutils.Replace(req.URL.Path, map[string]string{
 					s.config.IPUUID: originalSessionId,
 				}),
@@ -312,7 +322,7 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 
 		r.URL = &url.URL{
 			Scheme: "http",
-			Host:   net.JoinHostPort(localHost, s.config.BrowserPort),
+			Host:   net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
 			Path: pathutils.Replace(req.URL.Path, map[string]string{
 				s.config.IPUUID: originalSessionId,
 			}),
@@ -347,7 +357,7 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 
-		log.Info().Str("sessionId", originalSessionId).Msg("session proxy response modified")
+		log.Info().Int("statusCode", r.StatusCode).Str("sessionId", originalSessionId).Msg("session proxy response modified")
 
 		return nil
 	}
@@ -355,7 +365,7 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 	rp := proxy.NewHTTPReverseProxy(
 		proxy.WithRequestModifier(reqModifier),
 		proxy.WithResponseModifier(responseModifier),
-		proxy.WithErrorHandler(errorHandler),
+		proxy.WithErrorHandler(defaultErrorHandler),
 	)
 
 	rp.ServeHTTP(rw, req)
@@ -387,7 +397,7 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 	resolver := func(r *http.Request) (*url.URL, error) {
 		url := &url.URL{
 			Scheme: "ws",
-			Host:   net.JoinHostPort(localHost, s.config.BrowserPort),
+			Host:   net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
 			Path:   "/",
 		}
 		return url, nil
@@ -413,6 +423,134 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 
 	retryDialer := proxy.WithRetryTimeout(s.config.SessionCreateTimeout)
 	rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose, retryDialer)
+	rp.ServeHTTP(rw, req)
+}
+
+func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
+	log := logctx.FromContext(req.Context())
+
+	sessionId := req.Header.Get("Mcp-Session-Id")
+	if sessionId == "" && req.Method == http.MethodPost {
+
+		if s.store.Len() > 0 {
+			log.Err(errSessionCreate).Msg("mcp session already started")
+			jsonrpc.WriteError(rw, http.StatusBadRequest, jsonrpc.InvalidRequest, "Invalid Request: Server already initialized")
+			return
+		}
+
+		s.manager.Touch(s.config.IPUUID)
+
+		url := &url.URL{
+			Scheme:   "http",
+			Host:     net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
+			Path:     req.URL.Path,
+			RawQuery: req.URL.RawQuery,
+		}
+
+		if err := wait(url.String(), s.config.SessionCreateTimeout); err != nil {
+			log.Err(err).Msg("browser service unavailable")
+			jsonrpc.WriteError(rw, http.StatusServiceUnavailable, jsonrpc.InternalError, "Internal error: browser mcp server unavailable")
+			return
+		}
+
+		reqModifier := func(r *http.Request) {
+			r.URL = url
+			r.Host = net.JoinHostPort(localhost, s.config.BrowserPort)
+			log.Info().Msg("mcp session create request modified")
+		}
+
+		respModifier := func(r *http.Response) error {
+			if r.StatusCode != http.StatusOK && r.StatusCode != http.StatusCreated {
+				log.Err(errSessionCreate).Int("statusCode", r.StatusCode).Msg("unexpected status code, mcp session not created")
+				notifyError(s.broadcaster, "unexpected status code", errSessionCreate)
+				return errSessionCreate
+			}
+
+			sessionId := s.config.IPUUID
+			if mcpSessionId := r.Header.Get("Mcp-Session-Id"); mcpSessionId != "" {
+				sessionId = mcpSessionId
+			}
+
+			s.storeSessionId(sessionId)
+
+			r.Header.Set("Mcp-Session-Id", s.config.IPUUID)
+			log.Info().Int("statusCode", r.StatusCode).Msg("mcp session create response modified")
+			return nil
+		}
+
+		transport := &retryTransport{
+			MaxRetries: s.config.SessionRetryCount,
+			Delay:      s.config.SessionRetryDelay,
+		}
+
+		rp := proxy.NewHTTPReverseProxy(
+			proxy.WithTransport(transport),
+			proxy.WithRequestModifier(reqModifier),
+			proxy.WithResponseModifier(respModifier),
+			proxy.WithErrorHandler(mcpErrorHandler),
+		)
+
+		rp.ServeHTTP(rw, req)
+		return
+	}
+
+	if sessionId == "" {
+		log.Err(errSessionNotFound).Msg("missing Mcp-Session-Id header")
+		jsonrpc.WriteError(rw, http.StatusBadRequest, jsonrpc.InvalidParams, "Bad Request: Mcp-Session-Id header is required")
+		return
+	}
+
+	if sessionId != s.config.IPUUID {
+		log.Err(errSessionNotFound).Str("sessionId", sessionId).Msg("unknown mcp sessionId")
+		jsonrpc.WriteError(rw, http.StatusNotFound, jsonrpc.SessionNotFound, "Session not found")
+		return
+	}
+
+	originalSessionId, ok := s.getSessionId(sessionId)
+	if !ok {
+		log.Err(errSessionNotFound).Str("sessionId", sessionId).Msg("mcp sessionId not found")
+		jsonrpc.WriteError(rw, http.StatusNotFound, jsonrpc.SessionNotFound, "Session not found")
+		return
+	}
+
+	s.manager.Touch(s.config.IPUUID)
+
+	log.Info().Str("sessionId", sessionId).Msg("proxying mcp request")
+
+	reqModifier := func(r *http.Request) {
+		if req.Method == http.MethodDelete {
+			time.AfterFunc(defaultSleepTimeout, func() {
+				notifyDelete(s.broadcaster, "delete browser")
+				log.Info().Str("sessionId", sessionId).Msg("mcp session deleted")
+			})
+		}
+
+		r.Header.Set("Mcp-Session-Id", originalSessionId)
+		if sessionId == originalSessionId {
+			r.Header.Del("Mcp-Session-Id")
+		}
+
+		r.URL = &url.URL{
+			Scheme:   "http",
+			Host:     net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
+			Path:     "/mcp",
+			RawQuery: req.URL.RawQuery,
+		}
+		r.Host = net.JoinHostPort(localhost, s.config.BrowserPort)
+		log.Info().Str("sessionId", sessionId).Msg("mcp request modified")
+	}
+
+	respModifier := func(r *http.Response) error {
+		r.Header.Set("Mcp-Session-Id", s.config.IPUUID)
+		log.Info().Int("statusCode", r.StatusCode).Str("sessionId", sessionId).Msg("mcp response modified")
+		return nil
+	}
+
+	rp := proxy.NewHTTPReverseProxy(
+		proxy.WithRequestModifier(reqModifier),
+		proxy.WithResponseModifier(respModifier),
+		proxy.WithErrorHandler(mcpErrorHandler),
+	)
 	rp.ServeHTTP(rw, req)
 }
 
@@ -503,7 +641,7 @@ func (s *Service) RouteVNC(rw http.ResponseWriter, req *http.Request) {
 	}
 	defer wsconn.Close()
 
-	addr := net.JoinHostPort(localHost, "5900")
+	addr := net.JoinHostPort(loopbackAddr, "5900")
 	conn, err := dialTCP("tcp", addr)
 	if err != nil {
 		log.Err(err).Msg("vnc tcp connection failed")
@@ -598,10 +736,8 @@ func (s *Service) getSessionId(key string) (string, bool) {
 	return str, ok
 }
 
-func writeErrorResponse(rw http.ResponseWriter, status int, err error) {
-	rw.Header().Set("Content-Type", "application/json")
-	rw.WriteHeader(status)
-	json.NewEncoder(rw).Encode(map[string]string{"error": err.Error()})
+func writeErrorResponse(rw http.ResponseWriter, status int, err *selenium.SeleniumError) {
+	selenium.WriteError(rw, status, err)
 }
 
 func notifyError(broadcaster broadcast.Broadcaster[Event], source string, err error) {
