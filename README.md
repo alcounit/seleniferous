@@ -9,7 +9,6 @@ ends or goes idle.
 [![Go Reference](https://pkg.go.dev/badge/github.com/alcounit/seleniferous.svg)](https://pkg.go.dev/github.com/alcounit/seleniferous/v2)
 [![Docker Pulls](https://img.shields.io/docker/pulls/alcounit/seleniferous.svg)](https://hub.docker.com/r/alcounit/seleniferous)
 [![codecov](https://codecov.io/gh/alcounit/seleniferous/branch/main/graph/badge.svg)](https://codecov.io/gh/alcounit/seleniferous)
-[![Go Report Card](https://goreportcard.com/badge/github.com/alcounit/seleniferous/v2)](https://goreportcard.com/report/github.com/alcounit/seleniferous/v2)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
 ---

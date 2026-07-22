@@ -47,25 +47,14 @@ func main() {
 	store := store.NewDefaultStore[string]()
 	svc := service.NewService(cfg, store, mgr, broadcaster)
 
+	hostname, err := os.Hostname()
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to resolve hostname, using fallback")
+		hostname = "unknown"
+	}
+
 	router := chi.NewRouter()
-	router.Use(func(next http.Handler) http.Handler {
-		fn := func(rw http.ResponseWriter, req *http.Request) {
-
-			selenosisReqId := req.Header.Get("Selenosis-Request-ID")
-			logger := log.With().
-				Str("method", req.Method).
-				Str("path", req.URL.Path).
-				Str("reqId", uuid.NewString()).
-				Str("selenosisReqId", selenosisReqId).
-				Logger()
-
-			ctx := req.Context()
-			ctx = logctx.IntoContext(ctx, logger)
-
-			next.ServeHTTP(rw, req.WithContext(ctx))
-		}
-		return http.HandlerFunc(fn)
-	})
+	router.Use(requestContextMiddleware(log, hostname))
 
 	createTimeoutMiddleWare := waitFirstRequest(cfg.SessionCreateTimeout, func() {
 		broadcaster.Broadcast(sessionCreateTimeout())
@@ -234,5 +223,29 @@ func waitFirstRequest(deadline time.Duration, onTimeout func()) func(next http.H
 
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+func requestContextMiddleware(logger zerolog.Logger, hostname string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		fn := func(rw http.ResponseWriter, req *http.Request) {
+
+			selenosisReqId := req.Header.Get("X-Selenosis-Request-ID")
+			selenosisHost := req.Header.Get("X-Selenosis-Hostname")
+			l := logger.With().
+				Str("method", req.Method).
+				Str("path", req.URL.Path).
+				Str("reqId", uuid.NewString()).
+				Str("selenosisReqId", selenosisReqId).
+				Str("selenosisHost", selenosisHost).
+				Str("hostname", hostname).
+				Logger()
+
+			ctx := req.Context()
+			ctx = logctx.IntoContext(ctx, l)
+
+			next.ServeHTTP(rw, req.WithContext(ctx))
+		}
+		return http.HandlerFunc(fn)
 	}
 }
