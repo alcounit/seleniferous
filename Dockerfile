@@ -1,4 +1,7 @@
-FROM golang:1.25.0 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25.0 AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 
@@ -7,11 +10,7 @@ RUN go mod download
 
 COPY . .
 
-ENV CGO_ENABLED=0 \
-    GOOS=linux \
-    GOARCH=amd64
-
-RUN go build \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -ldflags="-s -w" \
     -o /out/seleniferous \
