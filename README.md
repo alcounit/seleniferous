@@ -16,7 +16,9 @@ ends or goes idle.
 ## What it does
 
 seleniferous is not something you run by hand — it ships **inside the browser pod** as a
-sidecar and is driven by the selenosis hub. In that pod it:
+sidecar and is driven by the selenosis hub. It is **mandatory**: every `BrowserConfig` must
+declare it, and the container must be named `seleniferous`, because both the hub and
+browser-controller look it up by that exact name. In that pod it:
 
 - **Fronts the browser.** Proxies WebDriver (incl. BiDi), Chrome DevTools Protocol,
   Playwright (WebSocket), and MCP traffic to the local browser process on `BROWSER_PORT`.
@@ -74,12 +76,18 @@ seleniferous is configured via environment variables:
 | --- | --- | --- |
 | `LISTEN_ADDR` | `:4445` | HTTP listen address. |
 | `BROWSER_PORT` | `4444` | Local browser port inside the pod. |
-| `SESSION_RETRY_COUNT` | `5` | Maximum retry attempts for session creation. |
-| `SESSION_RETRY_DELAY` | `2s` | Delay between consecutive session-creation attempts. |
-| `SESSION_CREATE_TIMEOUT` | `1m` | Maximum time to wait for a browser response. |
+| `SESSION_CREATE_TIMEOUT` | `1m` | How long to wait for the browser to start answering before giving up on a create. |
 | `SESSION_IDLE_TIMEOUT` | `5m` | Max time to wait for the first request, then max idle time after session creation. |
 | `ROUTING_RULES` | empty | Rules for the internal HTTP proxy (see below). |
 | `POD_IP` | auto | Pod IP used to derive the stable `sessionId` (auto-detected if absent). |
+
+These are set per browser pod, in the sidecar's `env` inside `BrowserConfig` — the Helm
+chart does not deploy seleniferous and cannot configure it. `LISTEN_ADDR` must stay aligned
+with the hub's `PROXY_PORT` (both default to `4445`).
+
+> `SESSION_CREATE_TIMEOUT` also exists on the hub, where it means something else entirely —
+> there it is the budget for retrying a refused dial *to this sidecar*. Setting one has no
+> effect on the other.
 
 ---
 

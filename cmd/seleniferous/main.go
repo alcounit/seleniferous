@@ -140,8 +140,6 @@ func loadConfig() (service.ServiceConfig, string, time.Duration, error) {
 	addr := env.GetEnvOrDefault("LISTEN_ADDR", ":4445")
 	cfg.BrowserPort = env.GetEnvOrDefault("BROWSER_PORT", "4444")
 
-	cfg.SessionRetryCount = env.GetEnvIntOrDefault("SESSION_RETRY_COUNT", 5)
-	cfg.SessionRetryDelay = env.GetEnvDurationOrDefault("SESSION_RETRY_DELAY", 2*time.Second)
 	cfg.SessionCreateTimeout = env.GetEnvDurationOrDefault("SESSION_CREATE_TIMEOUT", 1*time.Minute)
 	sessionIdleTimeout := env.GetEnvDurationOrDefault("SESSION_IDLE_TIMEOUT", 5*time.Minute)
 

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -186,58 +187,12 @@ func TestCreateSessionRemovesSelenosisOptionsFromRequest(t *testing.T) {
 	}
 }
 
-func TestCreateSessionUsesRetryConfig(t *testing.T) {
+func TestCreateSessionDoesNotRetryFailedRoundTrip(t *testing.T) {
 	st := store.NewDefaultStore[string]()
 	cfg := ServiceConfig{
 		IPUUID:               "fake",
 		BrowserPort:          "4444",
 		SessionCreateTimeout: 100 * time.Millisecond,
-		SessionRetryCount:    2,
-		SessionRetryDelay:    0,
-	}
-	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
-
-	payload := selenium.Payload{
-		"value": map[string]any{
-			"sessionId": "orig",
-		},
-	}
-	body, _ := json.Marshal(payload)
-
-	var postCalls int
-	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.Method == http.MethodHead {
-			return response(http.StatusOK, ""), nil
-		}
-		postCalls++
-		if postCalls < 3 {
-			return nil, errors.New("fail")
-		}
-		return response(http.StatusOK, string(body)), nil
-	})
-
-	withDefaultTransports(t, rt, func() {
-		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
-		rw := httptestRecorder()
-
-		svc.CreateSession(rw, req)
-
-		if rw.status != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", rw.status)
-		}
-		if postCalls != 3 {
-			t.Fatalf("expected 3 POST attempts, got %d", postCalls)
-		}
-	})
-}
-
-func TestCreateSessionZeroRetries(t *testing.T) {
-	st := store.NewDefaultStore[string]()
-	cfg := ServiceConfig{
-		BrowserPort:          "4444",
-		SessionCreateTimeout: 100 * time.Millisecond,
-		SessionRetryCount:    0,
-		SessionRetryDelay:    0,
 	}
 	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
@@ -247,10 +202,7 @@ func TestCreateSessionZeroRetries(t *testing.T) {
 			return response(http.StatusOK, ""), nil
 		}
 		postCalls++
-		if postCalls == 1 {
-			return nil, errors.New("fail")
-		}
-		return response(http.StatusOK, `{}`), nil
+		return nil, errors.New("fail")
 	})
 
 	withDefaultTransports(t, rt, func() {
@@ -263,7 +215,37 @@ func TestCreateSessionZeroRetries(t *testing.T) {
 			t.Fatalf("expected status 500, got %d", rw.status)
 		}
 		if postCalls != 1 {
-			t.Fatalf("expected 1 POST attempt, got %d", postCalls)
+			t.Fatalf("expected exactly 1 POST attempt, got %d", postCalls)
+		}
+	})
+}
+
+func TestProxyMcpInitDoesNotRetryFailedRoundTrip(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	cfg := ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          "4444",
+		SessionCreateTimeout: 100 * time.Millisecond,
+	}
+	svc := NewService(cfg, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	var postCalls int
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodHead {
+			return response(http.StatusOK, ""), nil
+		}
+		postCalls++
+		return nil, errors.New("fail")
+	})
+
+	withDefaultTransports(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp", bytes.NewBufferString(`{}`), nil, "")
+		rw := httptestRecorder()
+
+		svc.ProxyMcp(rw, req)
+
+		if postCalls != 1 {
+			t.Fatalf("expected exactly 1 POST attempt, got %d", postCalls)
 		}
 	})
 }
@@ -1497,100 +1479,116 @@ func TestExternalBaseURLFromHeaders(t *testing.T) {
 	}
 }
 
-func TestRetryTransportSuccessAfterRetry(t *testing.T) {
+func TestWaitSucceedsOnFirstProbe(t *testing.T) {
+	var calls int32
 	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader("ok")),
-			Header:     make(http.Header),
-		}, nil
+		atomic.AddInt32(&calls, 1)
+		return response(http.StatusOK, "ok"), nil
 	}), func() {
-		var calls int
-		base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			calls++
-			if calls < 2 {
-				return nil, errors.New("boom")
-			}
-			body, _ := io.ReadAll(req.Body)
-			if string(body) != "payload" {
-				t.Fatalf("unexpected body: %s", string(body))
-			}
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader("ok")),
-				Header:     make(http.Header),
-			}, nil
-		})
-
-		rt := &retryTransport{Base: base, MaxRetries: 2, Delay: 0}
-		req := newRequestWithParams(http.MethodPost, "http://example.com", bytes.NewBufferString("payload"), nil, "")
-
-		resp, err := rt.RoundTrip(req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("unexpected status: %d", resp.StatusCode)
-		}
-	})
-}
-
-func TestRetryTransportAllFail(t *testing.T) {
-	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader("ok")),
-			Header:     make(http.Header),
-		}, nil
-	}), func() {
-		rt := &retryTransport{Base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			return nil, errors.New("fail")
-		}), MaxRetries: 1, Delay: 0}
-
-		req := newRequestWithParams(http.MethodGet, "http://example.com", nil, nil, "")
-		_, err := rt.RoundTrip(req)
-		if err == nil || !strings.Contains(err.Error(), "all retries failed") {
-			t.Fatalf("expected retries error, got %v", err)
-		}
-	})
-}
-
-func TestRetryTransportBodyReadError(t *testing.T) {
-	rt := &retryTransport{Base: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return response(http.StatusOK, "{}"), nil
-	}), MaxRetries: 0, Delay: 0}
-
-	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return response(http.StatusOK, ""), nil
-	}), func() {
-		req := newRequestWithParams(http.MethodPost, "http://example.com", io.NopCloser(errorReader{}), nil, "")
-		_, err := rt.RoundTrip(req)
-		if err == nil {
-			t.Fatal("expected body read error")
-		}
-	})
-}
-
-func TestWaitSuccessAndTimeout(t *testing.T) {
-	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader("ok")),
-			Header:     make(http.Header),
-		}, nil
-	}), func() {
-		if err := wait("http://example.com", 60*time.Millisecond); err != nil {
+		if err := wait(context.Background(), "http://example.com", time.Second); err != nil {
 			t.Fatalf("unexpected wait error: %v", err)
 		}
 	})
 
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("expected exactly 1 probe, got %d", got)
+	}
+}
+
+func TestWaitSucceedsAfterRetries(t *testing.T) {
+	var calls int32
+	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if atomic.AddInt32(&calls, 1) < 3 {
+			return nil, errors.New("down")
+		}
+		return response(http.StatusOK, "ok"), nil
+	}), func() {
+		if err := wait(context.Background(), "http://example.com", time.Second); err != nil {
+			t.Fatalf("unexpected wait error: %v", err)
+		}
+	})
+
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Fatalf("expected 3 probes, got %d", got)
+	}
+}
+
+func TestWaitTimesOutWhenBrowserNeverResponds(t *testing.T) {
 	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return nil, errors.New("down")
 	}), func() {
-		if err := wait("http://example.com", 60*time.Millisecond); err == nil {
+		start := time.Now()
+		err := wait(context.Background(), "http://example.com", 100*time.Millisecond)
+		elapsed := time.Since(start)
+
+		if err == nil {
 			t.Fatal("expected wait error")
 		}
+		if !strings.Contains(err.Error(), "does not respond in") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if elapsed > 2*time.Second {
+			t.Fatalf("wait overshot its budget: took %v", elapsed)
+		}
 	})
+}
+
+func TestWaitTimesOutOnHungProbe(t *testing.T) {
+	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	}), func() {
+		start := time.Now()
+		err := wait(context.Background(), "http://example.com", 100*time.Millisecond)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected wait error on a hung probe")
+		}
+		if elapsed > 2*time.Second {
+			t.Fatalf("hung probe was not bounded by the budget: took %v", elapsed)
+		}
+	})
+}
+
+func TestWaitStopsOnCancelledContext(t *testing.T) {
+	var calls int32
+	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		atomic.AddInt32(&calls, 1)
+		return nil, errors.New("down")
+	}), func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		start := time.Now()
+		err := wait(ctx, "http://example.com", time.Minute)
+		elapsed := time.Since(start)
+
+		if err == nil {
+			t.Fatal("expected wait error on a cancelled context")
+		}
+		if elapsed > 2*time.Second {
+			t.Fatalf("cancelled context did not stop wait: took %v", elapsed)
+		}
+		if got := atomic.LoadInt32(&calls); got > 1 {
+			t.Fatalf("expected at most 1 probe on a cancelled context, got %d", got)
+		}
+	})
+}
+
+func TestProbeReturnsWhenBudgetAlreadyExhausted(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	if err := probe(ctx, "http://example.com"); err == nil {
+		t.Fatal("expected error when the budget is already exhausted")
+	}
+}
+
+func TestProbeRejectsInvalidURL(t *testing.T) {
+	if err := probe(context.Background(), "http://a b.com"); err == nil {
+		t.Fatal("expected error for an invalid url")
+	}
 }
 
 type fakeBroadcaster struct {
@@ -1651,11 +1649,14 @@ func withDefaultTransports(t *testing.T, rt http.RoundTripper, fn func()) {
 	defaultClientMu.Lock()
 	prevClient := http.DefaultClient.Transport
 	prevDefault := http.DefaultTransport
+	prevProxy := proxy.DefaultTransport
 	http.DefaultClient.Transport = rt
 	http.DefaultTransport = rt
+	proxy.DefaultTransport = rt
 	defer func() {
 		http.DefaultClient.Transport = prevClient
 		http.DefaultTransport = prevDefault
+		proxy.DefaultTransport = prevProxy
 		defaultClientMu.Unlock()
 	}()
 	fn()
@@ -1770,18 +1771,6 @@ func withDialTCP(t *testing.T, fn func(network, addr string) (net.Conn, error), 
 		defaultClientMu.Unlock()
 	}()
 	run()
-}
-
-func withDefaultTransport(t *testing.T, rt http.RoundTripper, fn func()) {
-	t.Helper()
-	defaultClientMu.Lock()
-	prev := http.DefaultTransport
-	http.DefaultTransport = rt
-	defer func() {
-		http.DefaultTransport = prev
-		defaultClientMu.Unlock()
-	}()
-	fn()
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -1906,23 +1895,6 @@ func TestExternalBaseURLFromHeadersBadHost(t *testing.T) {
 	}
 }
 
-func TestRetryTransportUsesDefaultBase(t *testing.T) {
-	withDefaultTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader("ok")),
-			Header:     make(http.Header),
-		}, nil
-	}), func() {
-		rt := &retryTransport{MaxRetries: 0, Delay: 0}
-		req := newRequestWithParams(http.MethodGet, "http://example.com", nil, nil, "")
-		_, err := rt.RoundTrip(req)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-}
-
 func TestExternalBaseURLFromHeadersURLParse(t *testing.T) {
 	h := http.Header{}
 	h.Set("X-Selenosis-External-URL", "http://example.com/path")
@@ -2032,23 +2004,6 @@ func TestRouteVNCNormalClose(t *testing.T) {
 		case <-done:
 		case <-time.After(2 * time.Second):
 			t.Fatal("timed out waiting for RouteVNC to exit after normal close")
-		}
-	})
-}
-
-func TestRetryTransportWaitFails(t *testing.T) {
-	withDefaultClientTransport(t, roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		return nil, errors.New("down")
-	}), func() {
-		prev := defaultSessionWaitTimeout
-		defaultSessionWaitTimeout = 50 * time.Millisecond
-		defer func() { defaultSessionWaitTimeout = prev }()
-
-		rt := &retryTransport{MaxRetries: 0, Delay: 0}
-		req := newRequestWithParams(http.MethodPost, "http://example.com", nil, nil, "")
-		_, err := rt.RoundTrip(req)
-		if err == nil {
-			t.Fatal("expected error when wait fails")
 		}
 	})
 }
