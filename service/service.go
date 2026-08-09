@@ -50,16 +50,16 @@ var (
 	loopbackAddr = "127.0.0.1"
 	localhost    = "localhost"
 
-	defaultSleepTimeout       = 3 * time.Second
-	defaultSessionWaitTimeout = 10 * time.Second
+	defaultSleepTimeout = 3 * time.Second
+
+	waitPollInterval  = 50 * time.Millisecond
+	waitAttemptCutoff = 5 * time.Second
 )
 
 type ServiceConfig struct {
 	IPUUID               string
 	BrowserPort          string
 	Rules                []rule.Rule
-	SessionRetryCount    int
-	SessionRetryDelay    time.Duration
 	SessionCreateTimeout time.Duration
 }
 
@@ -124,7 +124,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 		Path:   req.URL.Path,
 	}
 
-	if err := wait(url.String(), s.config.SessionCreateTimeout); err != nil {
+	if err := wait(req.Context(), url.String(), s.config.SessionCreateTimeout); err != nil {
 		log.Err(err).Msg("browser service unavailable")
 		writeErrorResponse(rw, http.StatusServiceUnavailable, selenium.Error("browser service unavailable", err))
 		return
@@ -215,13 +215,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 		return nil
 	}
 
-	transport := &retryTransport{
-		MaxRetries: s.config.SessionRetryCount,
-		Delay:      s.config.SessionRetryDelay,
-	}
-
 	rp := proxy.NewHTTPReverseProxy(
-		proxy.WithTransport(transport),
 		proxy.WithRequestModifier(requestModifier),
 		proxy.WithResponseModifier(responseModifier),
 		proxy.WithErrorHandler(defaultErrorHandler),
@@ -421,7 +415,7 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 
 	})
 
-	retryDialer := proxy.WithRetryTimeout(s.config.SessionCreateTimeout)
+	retryDialer := proxy.WithWSDialRetry(proxy.DialRetry{Timeout: s.config.SessionCreateTimeout})
 	rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose, retryDialer)
 	rp.ServeHTTP(rw, req)
 }
@@ -447,7 +441,7 @@ func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
 			RawQuery: req.URL.RawQuery,
 		}
 
-		if err := wait(url.String(), s.config.SessionCreateTimeout); err != nil {
+		if err := wait(req.Context(), url.String(), s.config.SessionCreateTimeout); err != nil {
 			log.Err(err).Msg("browser service unavailable")
 			jsonrpc.WriteError(rw, http.StatusServiceUnavailable, jsonrpc.InternalError, "Internal error: browser mcp server unavailable")
 			return
@@ -478,13 +472,7 @@ func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
 			return nil
 		}
 
-		transport := &retryTransport{
-			MaxRetries: s.config.SessionRetryCount,
-			Delay:      s.config.SessionRetryDelay,
-		}
-
 		rp := proxy.NewHTTPReverseProxy(
-			proxy.WithTransport(transport),
 			proxy.WithRequestModifier(reqModifier),
 			proxy.WithResponseModifier(respModifier),
 			proxy.WithErrorHandler(mcpErrorHandler),
@@ -756,75 +744,49 @@ func notifyDelete(broadcaster broadcast.Broadcaster[Event], source string) {
 	})
 }
 
-type retryTransport struct {
-	Base       http.RoundTripper
-	MaxRetries int
-	Delay      time.Duration
-}
+func wait(ctx context.Context, u string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	log := logctx.FromContext(req.Context())
-
-	if t.Base == nil {
-		t.Base = http.DefaultTransport
-	}
-
-	if err := wait(req.URL.String(), defaultSessionWaitTimeout); err != nil {
-		return nil, err
-	}
-
-	var bodyBytes []byte
-	if req.Body != nil {
-		var err error
-		bodyBytes, err = io.ReadAll(req.Body)
-		if err != nil {
-			return nil, err
-		}
-		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-	}
-
-	var lastErr error
-	for i := 0; i <= t.MaxRetries; i++ {
-		if i > 0 {
-			time.Sleep(t.Delay)
-			if bodyBytes != nil {
-				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			}
-		}
-
-		resp, err := t.Base.RoundTrip(req)
-		if err == nil {
-			log.Info().Msg("roundtrip successful")
-			return resp, nil
-		}
-
-		lastErr = err
-		log.Warn().Err(err).Int("attempt", i+1).Int("maxAttempts", t.MaxRetries+1).Msg("roundtrip failed")
-	}
-
-	return nil, fmt.Errorf("all retries failed: %w", lastErr)
-}
-
-func wait(u string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-
-	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest(http.MethodHead, u, nil)
-		req.Close = true
-
-		resp, err := http.DefaultClient.Do(req)
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
-
-		if err == nil {
+	for {
+		if probe(ctx, u) == nil {
 			return nil
 		}
 
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s does not respond in %v", u, timeout)
+		case <-time.After(waitPollInterval):
+		}
+	}
+}
+
+func probe(ctx context.Context, u string) error {
+	attemptCutoff := waitAttemptCutoff
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining < attemptCutoff {
+			attemptCutoff = remaining
+		}
 	}
 
-	return fmt.Errorf("%s does not respond in %v", u, timeout)
+	if attemptCutoff <= 0 {
+		return context.DeadlineExceeded
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, attemptCutoff)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Close = true
+
+	resp, err := http.DefaultClient.Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	return err
 }
 
 func externalBaseURLFromHeaders(h http.Header) (*url.URL, bool) {
