@@ -50,8 +50,6 @@ var (
 	loopbackAddr = "127.0.0.1"
 	localhost    = "localhost"
 
-	defaultSleepTimeout = 3 * time.Second
-
 	waitPollInterval  = 50 * time.Millisecond
 	waitAttemptCutoff = 5 * time.Second
 )
@@ -411,17 +409,20 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 		log.Debug().Str("sessionId", ipUUID).Msg("ws message received")
 	})
 
+	var isSessionClosed bool
 	onClose := proxy.WithOnClose(func() {
-		time.AfterFunc(defaultSleepTimeout, func() {
-			notifyDelete(s.broadcaster, "delete browser")
-			log.Info().Str("sessionId", ipUUID).Msg("ws connection closed")
-		})
+		isSessionClosed = true
+		log.Info().Str("sessionId", ipUUID).Msg("ws connection closed")
 
 	})
 
 	retryDialer := proxy.WithWSDialRetry(proxy.DialRetry{Timeout: s.config.SessionCreateTimeout})
 	rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose, retryDialer)
 	rp.ServeHTTP(rw, req)
+
+	if isSessionClosed {
+		notifyDelete(s.broadcaster, "delete browser")
+	}
 }
 
 func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
@@ -509,14 +510,9 @@ func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
 
 	log.Info().Str("sessionId", sessionId).Msg("proxying mcp request")
 
-	reqModifier := func(r *http.Request) {
-		if req.Method == http.MethodDelete {
-			time.AfterFunc(defaultSleepTimeout, func() {
-				notifyDelete(s.broadcaster, "delete browser")
-				log.Info().Str("sessionId", sessionId).Msg("mcp session deleted")
-			})
-		}
+	isSessionDelete := req.Method == http.MethodDelete
 
+	reqModifier := func(r *http.Request) {
 		r.Header.Set("Mcp-Session-Id", originalSessionId)
 		if sessionId == originalSessionId {
 			r.Header.Del("Mcp-Session-Id")
@@ -544,6 +540,11 @@ func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
 		proxy.WithErrorHandler(mcpErrorHandler),
 	)
 	rp.ServeHTTP(rw, req)
+
+	if isSessionDelete {
+		notifyDelete(s.broadcaster, "delete browser")
+		log.Info().Str("sessionId", sessionId).Msg("mcp session deleted")
+	}
 }
 
 func (s *Service) RouteHTTP(rw http.ResponseWriter, req *http.Request) {
