@@ -683,8 +683,6 @@ func TestProxyMcpDeleteNotifiesDelete(t *testing.T) {
 			t.Fatalf("expected path /mcp, got %s", gotReq.URL.Path)
 		}
 
-		time.Sleep(defaultSleepTimeout + 500*time.Millisecond)
-
 		rec.mu.Lock()
 		defer rec.mu.Unlock()
 		found := false
@@ -715,8 +713,6 @@ func TestProxyMcpDeleteDoesNotNotifyOnOtherMethods(t *testing.T) {
 		rw := httptestRecorder()
 
 		svc.ProxyMcp(rw, req)
-
-		time.Sleep(defaultSleepTimeout + 500*time.Millisecond)
 
 		rec.mu.Lock()
 		defer rec.mu.Unlock()
@@ -1246,10 +1242,12 @@ func TestProxySessionDeleteBranch(t *testing.T) {
 	}
 }
 
+const legacyDeleteTimerDelay = 3 * time.Second
+
 // The delete notification raises SIGTERM, and the graceful shutdown that follows
 // cannot drain the connection still serving this request. It must therefore not
 // be broadcast until the DELETE response has been written. It used to be armed on
-// a defaultSleepTimeout timer when the request arrived, so a browser that took
+// a legacyDeleteTimerDelay timer when the request arrived, so a browser that took
 // longer than that to tear down had its client's response killed by the shutdown.
 // Hold the upstream open past that timer and assert nothing is broadcast while the
 // request is still unanswered.
@@ -1279,7 +1277,7 @@ func TestProxySessionDeleteNotifiesOnlyAfterResponse(t *testing.T) {
 
 		<-inFlight
 
-		time.Sleep(defaultSleepTimeout + 500*time.Millisecond)
+		time.Sleep(legacyDeleteTimerDelay + 500*time.Millisecond)
 		if rec.hasEventType(EventTypeDeleted) {
 			t.Error("delete event broadcast while the DELETE response was still in flight")
 		}
@@ -1495,6 +1493,10 @@ func TestProxyPlaywrightWebSocketCallbacks(t *testing.T) {
 		t.Fatal("timed out waiting for upstream websocket payload")
 	}
 
+	if rec.hasEventType(EventTypeDeleted) {
+		t.Fatal("delete event broadcast while the websocket was still open")
+	}
+
 	_ = clientConn.Close()
 
 	select {
@@ -1505,6 +1507,46 @@ func TestProxyPlaywrightWebSocketCallbacks(t *testing.T) {
 
 	if !waitForEventType(rec, EventTypeDeleted, 4*time.Second) {
 		t.Fatal("expected delete event after websocket close")
+	}
+}
+
+func TestProxyPlaywrightDoesNotNotifyOnDialFailure(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	rec := &fakeBroadcaster{}
+	svc := NewService(ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          "4444",
+		SessionCreateTimeout: 50 * time.Millisecond,
+	}, st, session.NewManager(time.Second, nil), rec)
+
+	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=fake", nil, nil, "")
+	rw := httptestRecorder()
+
+	svc.ProxyPlaywright(rw, req)
+
+	if rw.status != http.StatusBadGateway && rw.status != http.StatusInternalServerError {
+		t.Fatalf("expected proxy error status, got %d", rw.status)
+	}
+	if rec.hasEventType(EventTypeDeleted) {
+		t.Fatal("unexpected delete event after a failed upstream dial")
+	}
+}
+
+func TestProxyPlaywrightDoesNotNotifyOnInvalidIPUUID(t *testing.T) {
+	for _, target := range []string{"/playwright", "/playwright?ipuuid=other"} {
+		st := store.NewDefaultStore[string]()
+		rec := &fakeBroadcaster{}
+		svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), rec)
+
+		rw := httptestRecorder()
+		svc.ProxyPlaywright(rw, newRequestWithParams(http.MethodGet, target, nil, nil, ""))
+
+		if rw.status != http.StatusBadRequest {
+			t.Fatalf("expected status 400 for %s, got %d", target, rw.status)
+		}
+		if rec.hasEventType(EventTypeDeleted) {
+			t.Fatalf("unexpected delete event for %s", target)
+		}
 	}
 }
 
