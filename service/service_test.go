@@ -1246,6 +1246,53 @@ func TestProxySessionDeleteBranch(t *testing.T) {
 	}
 }
 
+// The delete notification raises SIGTERM, and the graceful shutdown that follows
+// cannot drain the connection still serving this request. It must therefore not
+// be broadcast until the DELETE response has been written. It used to be armed on
+// a defaultSleepTimeout timer when the request arrived, so a browser that took
+// longer than that to tear down had its client's response killed by the shutdown.
+// Hold the upstream open past that timer and assert nothing is broadcast while the
+// request is still unanswered.
+func TestProxySessionDeleteNotifiesOnlyAfterResponse(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+	rec := &fakeBroadcaster{}
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), rec)
+
+	var once sync.Once
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		once.Do(func() { close(inFlight) })
+		<-release
+		return response(http.StatusOK, `{}`), nil
+	})
+
+	done := make(chan struct{})
+	withProxyTransport(t, rt, func() {
+		go func() {
+			defer close(done)
+			req := newRequestWithParams(http.MethodDelete, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
+			svc.ProxySession(httptestRecorder(), req)
+		}()
+
+		<-inFlight
+
+		time.Sleep(defaultSleepTimeout + 500*time.Millisecond)
+		if rec.hasEventType(EventTypeDeleted) {
+			t.Error("delete event broadcast while the DELETE response was still in flight")
+		}
+
+		close(release)
+		<-done
+	})
+
+	if !waitForEventType(rec, EventTypeDeleted, 4*time.Second) {
+		t.Fatal("expected delete event once the response was written")
+	}
+}
+
 func TestProxySessionResponseInvalidJSON(t *testing.T) {
 	st := store.NewDefaultStore[string]()
 	st.Set("fake", "orig")

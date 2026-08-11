@@ -130,7 +130,8 @@ func main() {
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatal().Err(err).Msg("HTTP server shutdown error")
+		log.Warn().Err(err).Msg("graceful shutdown timed out, forcing close")
+		_ = srv.Close()
 	}
 }
 

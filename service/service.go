@@ -258,7 +258,7 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 
 		onMessage := proxy.WithOnMessage(func() {
 			s.manager.Touch(requestSessionId)
-			log.Info().Str("sessionId", requestSessionId).Msg("ws message received")
+			log.Debug().Str("sessionId", requestSessionId).Msg("ws message received")
 		})
 
 		onClose := proxy.WithOnClose(func() {
@@ -273,14 +273,12 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	reqModifier := func(r *http.Request) {
-		if req.Method == http.MethodDelete && len(pathutils.Parse(req.URL.Path)) == 2 {
+	// A DELETE on the session itself tears down the browser, after which this
+	// sidecar has nothing left to serve and shuts itself down.
+	isSessionDelete := req.Method == http.MethodDelete && len(pathutils.Parse(req.URL.Path)) == 2
 
-			time.AfterFunc(defaultSleepTimeout, func() {
-				notifyDelete(s.broadcaster, "delete browser")
-				log.Info().Msg("delete browser request")
-			})
-		} else {
+	reqModifier := func(r *http.Request) {
+		if !isSessionDelete {
 
 			if r.Body != nil {
 				body, err := io.ReadAll(r.Body)
@@ -363,6 +361,12 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 	)
 
 	rp.ServeHTTP(rw, req)
+
+	// Safe to shut down now: the client has its DELETE response.
+	if isSessionDelete {
+		notifyDelete(s.broadcaster, "delete browser")
+		log.Info().Msg("delete browser request")
+	}
 }
 
 func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
@@ -404,7 +408,7 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 
 	onMessage := proxy.WithOnMessage(func() {
 		s.manager.Touch(ipUUID)
-		log.Info().Str("sessionId", ipUUID).Msg("ws message received")
+		log.Debug().Str("sessionId", ipUUID).Msg("ws message received")
 	})
 
 	onClose := proxy.WithOnClose(func() {
