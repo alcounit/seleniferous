@@ -258,7 +258,7 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 
 		onMessage := proxy.WithOnMessage(func() {
 			s.manager.Touch(requestSessionId)
-			log.Info().Str("sessionId", requestSessionId).Msg("ws message received")
+			log.Debug().Str("sessionId", requestSessionId).Msg("ws message received")
 		})
 
 		onClose := proxy.WithOnClose(func() {
@@ -408,7 +408,7 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 
 	onMessage := proxy.WithOnMessage(func() {
 		s.manager.Touch(ipUUID)
-		log.Info().Str("sessionId", ipUUID).Msg("ws message received")
+		log.Debug().Str("sessionId", ipUUID).Msg("ws message received")
 	})
 
 	onClose := proxy.WithOnClose(func() {
