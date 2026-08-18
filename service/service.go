@@ -123,7 +123,11 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := wait(req.Context(), url.String(), s.config.SessionCreateTimeout); err != nil {
-		log.Err(err).Msg("browser service unavailable")
+		if errors.Is(err, context.Canceled) {
+			log.Warn().Err(err).Msg("session create abandoned by caller")
+		} else {
+			log.Err(err).Msg("browser service unavailable")
+		}
 		writeErrorResponse(rw, http.StatusServiceUnavailable, selenium.Error("browser service unavailable", err))
 		return
 	}
@@ -447,7 +451,11 @@ func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		if err := wait(req.Context(), url.String(), s.config.SessionCreateTimeout); err != nil {
-			log.Err(err).Msg("browser service unavailable")
+			if errors.Is(err, context.Canceled) {
+				log.Warn().Err(err).Msg("mcp session create abandoned by caller")
+			} else {
+				log.Err(err).Msg("browser service unavailable")
+			}
 			jsonrpc.WriteError(rw, http.StatusServiceUnavailable, jsonrpc.InternalError, "Internal error: browser mcp server unavailable")
 			return
 		}
@@ -750,6 +758,7 @@ func notifyDelete(broadcaster broadcast.Broadcaster[Event], source string) {
 }
 
 func wait(ctx context.Context, u string, timeout time.Duration) error {
+	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -760,7 +769,13 @@ func wait(ctx context.Context, u string, timeout time.Duration) error {
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("%s does not respond in %v", u, timeout)
+			// A caller hanging up ends the wait too, so say which happened and how long
+			// we actually waited - reporting the budget implies a browser that never came up.
+			waited := time.Since(started).Round(time.Millisecond)
+			if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf("%s abandoned after %v: %w", u, waited, ctx.Err())
+			}
+			return fmt.Errorf("%s does not respond in %v", u, waited)
 		case <-time.After(waitPollInterval):
 		}
 	}
