@@ -2096,3 +2096,37 @@ func TestRouteVNCNormalClose(t *testing.T) {
 		}
 	})
 }
+
+func TestWaitDistinguishesCallerCancelFromTimeout(t *testing.T) {
+	// Nothing ever listens here, so wait can only exit via ctx.
+	const dead = "http://127.0.0.1:1/session"
+
+	t.Run("caller cancels", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(100*time.Millisecond, cancel)
+
+		err := wait(ctx, dead, time.Hour)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("want wrapped context.Canceled, got %v", err)
+		}
+		if strings.Contains(err.Error(), "does not respond in 1h0m0s") {
+			t.Fatalf("error claims the full budget elapsed: %v", err)
+		}
+	})
+
+	t.Run("own deadline expires", func(t *testing.T) {
+		err := wait(context.Background(), dead, 150*time.Millisecond)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if errors.Is(err, context.Canceled) {
+			t.Fatalf("want a timeout, not a cancellation: %v", err)
+		}
+		if !strings.Contains(err.Error(), "does not respond in") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
