@@ -394,13 +394,17 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 
 	log.Info().Str("sessionId", ipUUID).Msg("playwright proxy request")
 
+	query := req.URL.Query()
+	query.Del("ipuuid")
+	rawQuery := query.Encode()
+
 	resolver := func(r *http.Request) (*url.URL, error) {
-		url := &url.URL{
-			Scheme: "ws",
-			Host:   net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
-			Path:   "/",
-		}
-		return url, nil
+		return &url.URL{
+			Scheme:   "ws",
+			Host:     net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
+			Path:     "/",
+			RawQuery: rawQuery,
+		}, nil
 	}
 
 	onConnect := proxy.WithOnConnect(func() {

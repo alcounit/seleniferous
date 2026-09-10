@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -1547,6 +1548,114 @@ func TestProxyPlaywrightDoesNotNotifyOnInvalidIPUUID(t *testing.T) {
 		if rec.hasEventType(EventTypeDeleted) {
 			t.Fatalf("unexpected delete event for %s", target)
 		}
+	}
+}
+
+func startBrowserQueryRecorder(t *testing.T) (string, <-chan *url.URL, func()) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen on local port: %v", err)
+	}
+
+	captured := make(chan *url.URL, 4)
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		target := *r.URL
+		select {
+		case captured <- &target:
+		default:
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	})}
+
+	done := make(chan struct{})
+	go func() {
+		_ = server.Serve(listener)
+		close(done)
+	}()
+
+	shutdown := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+		_ = listener.Close()
+		<-done
+	}
+
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	return port, captured, shutdown
+}
+
+func browserUpstreamURL(t *testing.T, target string) *url.URL {
+	t.Helper()
+
+	port, captured, shutdown := startBrowserQueryRecorder(t)
+	defer shutdown()
+
+	st := store.NewDefaultStore[string]()
+	svc := NewService(ServiceConfig{
+		IPUUID:      "fake",
+		BrowserPort: port,
+	}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	rw := httptestRecorder()
+	svc.ProxyPlaywright(rw, newRequestWithParams(http.MethodGet, target, nil, nil, ""))
+
+	select {
+	case upstream := <-captured:
+		return upstream
+	case <-time.After(2 * time.Second):
+		t.Fatal("browser was never called")
+		return nil
+	}
+}
+
+func TestProxyPlaywrightForwardsQueryToBrowser(t *testing.T) {
+	upstream := browserUpstreamURL(t, "/playwright?ipuuid=fake&headless=false&timeout=30000")
+
+	if upstream.Path != "/" {
+		t.Fatalf("unexpected browser path: %q", upstream.Path)
+	}
+
+	q := upstream.Query()
+	if q.Get("headless") != "false" {
+		t.Fatalf("expected headless=false to reach the browser, got %q", q.Get("headless"))
+	}
+	if q.Get("timeout") != "30000" {
+		t.Fatalf("expected timeout=30000 to reach the browser, got %q", q.Get("timeout"))
+	}
+	if _, ok := q["ipuuid"]; ok {
+		t.Fatal("expected ipuuid to be stripped")
+	}
+}
+
+func TestProxyPlaywrightStripsEveryIPUUIDValue(t *testing.T) {
+	upstream := browserUpstreamURL(t, "/playwright?ipuuid=fake&ipuuid=other&headless=false")
+
+	if got := upstream.Query()["ipuuid"]; len(got) != 0 {
+		t.Fatalf("expected no ipuuid values, got %#v", got)
+	}
+}
+
+func TestProxyPlaywrightSendsEmptyQueryWhenOnlyIPUUID(t *testing.T) {
+	upstream := browserUpstreamURL(t, "/playwright?ipuuid=fake")
+
+	if upstream.RawQuery != "" {
+		t.Fatalf("expected empty raw query, got %q", upstream.RawQuery)
+	}
+}
+
+func TestProxyPlaywrightPreservesRepeatedAndEncodedValues(t *testing.T) {
+	upstream := browserUpstreamURL(t, "/playwright?ipuuid=fake&args=--no-sandbox&args=--disable-gpu&note=a+b%26c")
+
+	q := upstream.Query()
+	args := q["args"]
+	if len(args) != 2 || args[0] != "--no-sandbox" || args[1] != "--disable-gpu" {
+		t.Fatalf("expected both args values in order, got %#v", args)
+	}
+	if q.Get("note") != "a b&c" {
+		t.Fatalf("expected encoded value to survive, got %q", q.Get("note"))
 	}
 }
 
