@@ -35,7 +35,7 @@ func TestCreateSessionStoreNotEmpty(t *testing.T) {
 	req := newRequestWithParams(http.MethodPost, "/session", nil, nil, "")
 	rw := httptestRecorder()
 
-	svc.CreateSession(rw, req)
+	svc.WebDriverNewSession(rw, req)
 
 	if rw.status != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rw.status)
@@ -50,7 +50,7 @@ func TestCreateSessionNilBody(t *testing.T) {
 	req.Body = nil
 	rw := httptestRecorder()
 
-	svc.CreateSession(rw, req)
+	svc.WebDriverNewSession(rw, req)
 
 	if rw.status != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rw.status)
@@ -71,7 +71,7 @@ func TestCreateSessionWaitFails(t *testing.T) {
 	withDefaultClientTransport(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 
 		if rw.status != http.StatusServiceUnavailable {
 			t.Fatalf("expected status 503, got %d", rw.status)
@@ -112,7 +112,7 @@ func TestCreateSessionSuccess(t *testing.T) {
 		req.Header.Set("X-Selenosis-External-URL", "http://external.test")
 		rw := httptestRecorder()
 
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 
 		if rw.status != http.StatusOK {
 			t.Fatalf("expected status 200, got %d", rw.status)
@@ -171,7 +171,7 @@ func TestCreateSessionRemovesSelenosisOptionsFromRequest(t *testing.T) {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(reqBody), nil, "")
 		rw := httptestRecorder()
 
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 
 		if rw.status != http.StatusOK {
 			t.Fatalf("expected status 200, got %d", rw.status)
@@ -210,7 +210,7 @@ func TestCreateSessionDoesNotRetryFailedRoundTrip(t *testing.T) {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
 
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 
 		if rw.status != http.StatusInternalServerError {
 			t.Fatalf("expected status 500, got %d", rw.status)
@@ -265,7 +265,7 @@ func TestCreateSessionResponseBodyNil(t *testing.T) {
 	withDefaultTransports(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 		if rw.status != http.StatusInternalServerError {
 			t.Fatalf("expected status 500, got %d", rw.status)
 		}
@@ -291,7 +291,7 @@ func TestCreateSessionReadError(t *testing.T) {
 	withDefaultTransports(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 
 		if rw.status != http.StatusInternalServerError {
 			t.Fatalf("expected status 500, got %d", rw.status)
@@ -317,7 +317,7 @@ func TestCreateSessionInvalidJSON(t *testing.T) {
 	withDefaultTransports(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 
 		if rw.status != http.StatusInternalServerError {
 			t.Fatalf("expected status 500, got %d", rw.status)
@@ -344,7 +344,7 @@ func TestCreateSessionMissingSessionId(t *testing.T) {
 	withDefaultTransports(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 		if rw.status != http.StatusInternalServerError {
 			t.Fatalf("expected status 500, got %d", rw.status)
 		}
@@ -370,7 +370,7 @@ func TestCreateSessionUpdateSessionIdFails(t *testing.T) {
 	withDefaultTransports(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 		if rw.status != http.StatusInternalServerError {
 			t.Fatalf("expected status 500, got %d", rw.status)
 		}
@@ -395,7 +395,7 @@ func TestCreateSessionNonOKStatus(t *testing.T) {
 	withDefaultTransports(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{}`), nil, "")
 		rw := httptestRecorder()
-		svc.CreateSession(rw, req)
+		svc.WebDriverNewSession(rw, req)
 		if rw.status != http.StatusInternalServerError {
 			t.Fatalf("expected status 500, got %d", rw.status)
 		}
@@ -412,7 +412,7 @@ func TestProxySessionUnknownSession(t *testing.T) {
 	req := newRequestWithParams(http.MethodGet, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
 	rw := httptestRecorder()
 
-	svc.ProxySession(rw, req)
+	svc.WebDriverProxy(rw, req)
 
 	if rw.status != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rw.status)
@@ -1123,7 +1123,7 @@ func TestProxySessionHTTP(t *testing.T) {
 		req := newRequestWithParams(http.MethodPost, "/session/fake/url", bytes.NewBufferString(reqBody), map[string]string{"sessionId": "fake"}, "")
 		rw := httptestRecorder()
 
-		svc.ProxySession(rw, req)
+		svc.WebDriverProxy(rw, req)
 
 		if gotReq == nil {
 			t.Fatal("expected request to reach transport")
@@ -1162,7 +1162,7 @@ func TestProxySessionBodyUnmarshalFails(t *testing.T) {
 	withProxyTransport(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session/fake/url", bytes.NewBufferString("{"), map[string]string{"sessionId": "fake"}, "")
 		rw := httptestRecorder()
-		svc.ProxySession(rw, req)
+		svc.WebDriverProxy(rw, req)
 		if string(gotBody) != "{" {
 			t.Fatalf("expected original body to pass through, got %s", string(gotBody))
 		}
@@ -1181,7 +1181,7 @@ func TestProxySessionNoBody(t *testing.T) {
 	withProxyTransport(t, rt, func() {
 		req := newRequestWithParams(http.MethodGet, "/session/fake/url", nil, map[string]string{"sessionId": "fake"}, "")
 		rw := httptestRecorder()
-		svc.ProxySession(rw, req)
+		svc.WebDriverProxy(rw, req)
 	})
 }
 
@@ -1197,7 +1197,7 @@ func TestProxySessionResponseBodyNil(t *testing.T) {
 	withProxyTransport(t, rt, func() {
 		req := newRequestWithParams(http.MethodGet, "/session/fake/url", nil, map[string]string{"sessionId": "fake"}, "")
 		rw := httptestRecorder()
-		svc.ProxySession(rw, req)
+		svc.WebDriverProxy(rw, req)
 	})
 }
 
@@ -1215,7 +1215,7 @@ func TestProxySessionRequestUpdateFails(t *testing.T) {
 	withProxyTransport(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session/fake/url", bytes.NewBufferString(`{"sessionId":"fake"}`), map[string]string{"sessionId": "fake"}, "")
 		rw := httptestRecorder()
-		svc.ProxySession(rw, req)
+		svc.WebDriverProxy(rw, req)
 		if !bytes.Contains(gotBody, []byte(`"fake"`)) {
 			t.Fatalf("expected original sessionId to remain, got %s", string(gotBody))
 		}
@@ -1235,7 +1235,7 @@ func TestProxySessionDeleteBranch(t *testing.T) {
 	withProxyTransport(t, rt, func() {
 		req := newRequestWithParams(http.MethodDelete, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
 		rw := httptestRecorder()
-		svc.ProxySession(rw, req)
+		svc.WebDriverProxy(rw, req)
 	})
 
 	if !waitForEventType(rec, EventTypeDeleted, 4*time.Second) {
@@ -1273,7 +1273,7 @@ func TestProxySessionDeleteNotifiesOnlyAfterResponse(t *testing.T) {
 		go func() {
 			defer close(done)
 			req := newRequestWithParams(http.MethodDelete, "/session/fake", nil, map[string]string{"sessionId": "fake"}, "")
-			svc.ProxySession(httptestRecorder(), req)
+			svc.WebDriverProxy(httptestRecorder(), req)
 		}()
 
 		<-inFlight
@@ -1304,7 +1304,7 @@ func TestProxySessionResponseInvalidJSON(t *testing.T) {
 	withProxyTransport(t, rt, func() {
 		req := newRequestWithParams(http.MethodPost, "/session/fake/url", bytes.NewBufferString(`{}`), map[string]string{"sessionId": "fake"}, "")
 		rw := httptestRecorder()
-		svc.ProxySession(rw, req)
+		svc.WebDriverProxy(rw, req)
 		if rw.status != http.StatusOK {
 			t.Fatalf("expected status 200, got %d", rw.status)
 		}
@@ -1321,7 +1321,7 @@ func TestProxySessionWebSocketPath(t *testing.T) {
 	req.Header.Set("Upgrade", "websocket")
 	rw := httptestRecorder()
 
-	svc.ProxySession(rw, req)
+	svc.WebDriverProxy(rw, req)
 
 	if rw.status != http.StatusBadGateway && rw.status != http.StatusInternalServerError {
 		t.Fatalf("expected proxy error status, got %d", rw.status)
@@ -1350,7 +1350,7 @@ func TestProxySessionWebSocketCallbacks(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		svc.ProxySession(rw, req)
+		svc.WebDriverProxy(rw, req)
 	}()
 
 	if err := readHTTPResponse(clientConn); err != nil {
@@ -1385,7 +1385,7 @@ func TestProxyPlaywrightMissingIPUUID(t *testing.T) {
 	req := newRequestWithParams(http.MethodGet, "/playwright", nil, nil, "")
 	rw := httptestRecorder()
 
-	svc.ProxyPlaywright(rw, req)
+	svc.PlaywrightConnect(rw, req)
 
 	if rw.status != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rw.status)
@@ -1396,10 +1396,10 @@ func TestProxyPlaywrightUnknownIPUUID(t *testing.T) {
 	st := store.NewDefaultStore[string]()
 	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
-	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=other", nil, nil, "")
+	req := newRequestWithParams(http.MethodGet, "/playwright/other", nil, map[string]string{"ipuuid": "other"}, "")
 	rw := httptestRecorder()
 
-	svc.ProxyPlaywright(rw, req)
+	svc.PlaywrightConnect(rw, req)
 
 	if rw.status != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rw.status)
@@ -1414,10 +1414,10 @@ func TestProxyPlaywrightStoresSessionWhenMissing(t *testing.T) {
 		SessionCreateTimeout: 50 * time.Millisecond,
 	}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
-	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=fake", nil, nil, "")
+	req := newRequestWithParams(http.MethodGet, "/playwright/fake", nil, map[string]string{"ipuuid": "fake"}, "")
 	rw := httptestRecorder()
 
-	svc.ProxyPlaywright(rw, req)
+	svc.PlaywrightConnect(rw, req)
 
 	if rw.status != http.StatusBadGateway && rw.status != http.StatusInternalServerError {
 		t.Fatalf("expected proxy error status, got %d", rw.status)
@@ -1436,10 +1436,10 @@ func TestProxyPlaywrightKeepsExistingSession(t *testing.T) {
 		SessionCreateTimeout: 50 * time.Millisecond,
 	}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
-	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=fake", nil, nil, "")
+	req := newRequestWithParams(http.MethodGet, "/playwright/fake", nil, map[string]string{"ipuuid": "fake"}, "")
 	rw := httptestRecorder()
 
-	svc.ProxyPlaywright(rw, req)
+	svc.PlaywrightConnect(rw, req)
 
 	if rw.status != http.StatusBadGateway && rw.status != http.StatusInternalServerError {
 		t.Fatalf("expected proxy error status, got %d", rw.status)
@@ -1465,7 +1465,7 @@ func TestProxyPlaywrightWebSocketCallbacks(t *testing.T) {
 	t.Cleanup(func() { _ = clientConn.Close() })
 	t.Cleanup(func() { _ = serverConn.Close() })
 
-	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=fake", nil, nil, "")
+	req := newRequestWithParams(http.MethodGet, "/playwright/fake", nil, map[string]string{"ipuuid": "fake"}, "")
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
@@ -1475,7 +1475,7 @@ func TestProxyPlaywrightWebSocketCallbacks(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		svc.ProxyPlaywright(rw, req)
+		svc.PlaywrightConnect(rw, req)
 	}()
 
 	if err := readHTTPResponse(clientConn); err != nil {
@@ -1520,10 +1520,10 @@ func TestProxyPlaywrightDoesNotNotifyOnDialFailure(t *testing.T) {
 		SessionCreateTimeout: 50 * time.Millisecond,
 	}, st, session.NewManager(time.Second, nil), rec)
 
-	req := newRequestWithParams(http.MethodGet, "/playwright?ipuuid=fake", nil, nil, "")
+	req := newRequestWithParams(http.MethodGet, "/playwright/fake", nil, map[string]string{"ipuuid": "fake"}, "")
 	rw := httptestRecorder()
 
-	svc.ProxyPlaywright(rw, req)
+	svc.PlaywrightConnect(rw, req)
 
 	if rw.status != http.StatusBadGateway && rw.status != http.StatusInternalServerError {
 		t.Fatalf("expected proxy error status, got %d", rw.status)
@@ -1534,13 +1534,14 @@ func TestProxyPlaywrightDoesNotNotifyOnDialFailure(t *testing.T) {
 }
 
 func TestProxyPlaywrightDoesNotNotifyOnInvalidIPUUID(t *testing.T) {
-	for _, target := range []string{"/playwright", "/playwright?ipuuid=other"} {
+	for _, ipUUID := range []string{"", "other"} {
+		target := "/playwright/" + ipUUID
 		st := store.NewDefaultStore[string]()
 		rec := &fakeBroadcaster{}
 		svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, session.NewManager(time.Second, nil), rec)
 
 		rw := httptestRecorder()
-		svc.ProxyPlaywright(rw, newRequestWithParams(http.MethodGet, target, nil, nil, ""))
+		svc.PlaywrightConnect(rw, newRequestWithParams(http.MethodGet, target, nil, map[string]string{"ipuuid": ipUUID}, ""))
 
 		if rw.status != http.StatusBadRequest {
 			t.Fatalf("expected status 400 for %s, got %d", target, rw.status)
@@ -1551,7 +1552,424 @@ func TestProxyPlaywrightDoesNotNotifyOnInvalidIPUUID(t *testing.T) {
 	}
 }
 
-func startBrowserQueryRecorder(t *testing.T) (string, <-chan *url.URL, func()) {
+const devtoolsVersionBody = `{"webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/0f3c-guid"}`
+
+func newDevtoolsService(t *testing.T, port string, rec *fakeBroadcaster) (*Service, store.Store[string]) {
+	t.Helper()
+
+	st := store.NewDefaultStore[string]()
+	if rec == nil {
+		rec = &fakeBroadcaster{}
+	}
+
+	svc := NewService(ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          port,
+		SessionCreateTimeout: time.Second,
+	}, st, session.NewManager(time.Second, nil), rec)
+
+	return svc, st
+}
+
+func debugModeBrowser(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/json/version" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(devtoolsVersionBody))
+}
+
+func devtoolsRequest(method, target, rest string) *http.Request {
+	params := map[string]string{"ipuuid": "fake"}
+	if rest != "" {
+		params["*"] = rest
+	}
+
+	req := newRequestWithParams(method, target, nil, params, "")
+	req.Header.Set("X-Selenosis-External-URL", "http://selenosis.example.com")
+
+	return req
+}
+
+func devtoolsWSRequest(target, rest string) *http.Request {
+	req := devtoolsRequest(http.MethodGet, target, rest)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+
+	return req
+}
+
+func lastCaptured(t *testing.T, captured <-chan *http.Request) *http.Request {
+	t.Helper()
+
+	var last *http.Request
+	for {
+		select {
+		case upstream := <-captured:
+			last = upstream
+		case <-time.After(300 * time.Millisecond):
+			if last == nil {
+				t.Fatal("browser was never called")
+			}
+			return last
+		}
+	}
+}
+
+func debugModeBrowserWith(extraPath, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/json/version":
+			debugModeBrowser(w, r)
+		case extraPath:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}
+}
+
+func devtoolsUpstream(t *testing.T, rest string, respond http.HandlerFunc) *http.Request {
+	t.Helper()
+
+	if respond == nil {
+		respond = debugModeBrowser
+	}
+
+	port, captured, shutdown := startBrowserRecorder(t, respond)
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/"+rest, rest))
+
+	return lastCaptured(t, captured)
+}
+
+func TestDevToolsMissingIPUUID(t *testing.T) {
+	svc, _ := newDevtoolsService(t, "4444", nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, newRequestWithParams(http.MethodGet, "/devtools/session//json/version", nil, nil, ""))
+
+	if rw.status != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rw.status)
+	}
+}
+
+func TestDevToolsForeignIPUUID(t *testing.T) {
+	svc, _ := newDevtoolsService(t, "4444", nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, newRequestWithParams(http.MethodGet, "/devtools/session/other/json/version", nil, map[string]string{"ipuuid": "other"}, ""))
+
+	if rw.status != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rw.status)
+	}
+}
+
+func TestDevToolsRegistersSession(t *testing.T) {
+	port, _, shutdown := startBrowserRecorder(t, debugModeBrowser)
+	defer shutdown()
+
+	svc, st := newDevtoolsService(t, port, nil)
+
+	for range 2 {
+		rw := httptestRecorder()
+		svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/version", "json/version"))
+	}
+
+	if got, ok := st.Get("fake"); !ok || got != "fake" {
+		t.Fatalf("expected the session to be registered under the ipuuid, got %q (present=%v)", got, ok)
+	}
+	if st.Len() != 1 {
+		t.Fatalf("expected exactly one session in the store, got %d", st.Len())
+	}
+}
+
+func TestDevToolsHTTPPathMapping(t *testing.T) {
+	tests := []struct {
+		name string
+		rest string
+		want string
+	}{
+		{name: "session root goes to the browser root", rest: "", want: "/"},
+		{name: "json version", rest: "json/version", want: "/json/version"},
+		{name: "json list", rest: "json/list", want: "/json/list"},
+		{name: "short json", rest: "json", want: "/json"},
+		{name: "json new", rest: "json/new", want: "/json/new"},
+		{name: "json protocol", rest: "json/protocol", want: "/json/protocol"},
+		{name: "json activate", rest: "json/activate/AB12", want: "/json/activate/AB12"},
+		{name: "json close", rest: "json/close/AB12", want: "/json/close/AB12"},
+		{name: "frontend static", rest: "devtools/inspector.html", want: "/devtools/inspector.html"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := devtoolsUpstream(t, tt.rest, nil)
+
+			if upstream.URL.Path != tt.want {
+				t.Fatalf("browser path = %q, want %q", upstream.URL.Path, tt.want)
+			}
+		})
+	}
+}
+
+func TestDevToolsHTTPSetsHostToBrowser(t *testing.T) {
+	port, captured, shutdown := startBrowserRecorder(t, debugModeBrowser)
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	req := devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/version", "json/version")
+	req.Host = "selenosis.example.com"
+	svc.DevToolsProxy(rw, req)
+
+	upstream := lastCaptured(t, captured)
+
+	want := net.JoinHostPort(loopbackAddr, port)
+	if upstream.Host != want {
+		t.Fatalf("Host header = %q, want %q", upstream.Host, want)
+	}
+}
+
+func TestDevToolsHTTPPreservesQuery(t *testing.T) {
+	port, captured, shutdown := startBrowserRecorder(t, debugModeBrowser)
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodPut, "/devtools/session/fake/json/new?url=https%3A%2F%2Fexample.com", "json/new"))
+
+	upstream := lastCaptured(t, captured)
+
+	if got := upstream.URL.Query().Get("url"); got != "https://example.com" {
+		t.Fatalf("query did not reach the browser: %q", got)
+	}
+	if upstream.Method != http.MethodPut {
+		t.Fatalf("method = %q, want PUT", upstream.Method)
+	}
+}
+
+func TestDevToolsHTTPPreservesKeylessRawQuery(t *testing.T) {
+	port, captured, shutdown := startBrowserRecorder(t, debugModeBrowser)
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodPut, "/devtools/session/fake/json/new?https://example.com", "json/new"))
+
+	upstream := lastCaptured(t, captured)
+
+	if upstream.URL.RawQuery != "https://example.com" {
+		t.Fatalf("raw query = %q, want it untouched", upstream.URL.RawQuery)
+	}
+}
+
+func TestDevToolsRewritesVersionBody(t *testing.T) {
+	tests := []struct {
+		name     string
+		external string
+		want     string
+	}{
+		{name: "plain", external: "http://selenosis.example.com", want: "ws://selenosis.example.com/devtools/session/fake/devtools/browser/0f3c-guid"},
+		{name: "tls", external: "https://selenosis.example.com", want: "wss://selenosis.example.com/devtools/session/fake/devtools/browser/0f3c-guid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			port, _, shutdown := startBrowserRecorder(t, debugModeBrowser)
+			defer shutdown()
+
+			svc, _ := newDevtoolsService(t, port, nil)
+
+			req := devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/version", "json/version")
+			req.Header.Set("X-Selenosis-External-URL", tt.external)
+			rw := httptestRecorder()
+			svc.DevToolsProxy(rw, req)
+
+			if !strings.Contains(rw.body.String(), tt.want) {
+				t.Fatalf("expected %q in the rewritten body, got %s", tt.want, rw.body.String())
+			}
+		})
+	}
+}
+
+func TestDevToolsRewritesListBody(t *testing.T) {
+	const body = `[{"id":"AB12","webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/page/AB12"}]`
+
+	port, _, shutdown := startBrowserRecorder(t, debugModeBrowserWith("/json/list", body))
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/list", "json/list"))
+
+	want := "ws://selenosis.example.com/devtools/session/fake/devtools/page/AB12"
+	if !strings.Contains(rw.body.String(), want) {
+		t.Fatalf("expected %q in the rewritten body, got %s", want, rw.body.String())
+	}
+}
+
+func TestDevToolsEmptyVersionBodyPassesThrough(t *testing.T) {
+	port, _, shutdown := startBrowserRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/version", "json/version"))
+
+	if rw.status != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", rw.status)
+	}
+	if rw.body.Len() != 0 {
+		t.Fatalf("expected an empty body to pass through, got %s", rw.body.String())
+	}
+}
+
+func TestDevToolsWithoutExternalURLPassesBodyThrough(t *testing.T) {
+	port, _, shutdown := startBrowserRecorder(t, debugModeBrowser)
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	req := newRequestWithParams(http.MethodGet, "/devtools/session/fake/json/version", nil, map[string]string{"ipuuid": "fake", "*": "json/version"}, "")
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, req)
+
+	if rw.body.String() != devtoolsVersionBody {
+		t.Fatalf("expected the body to pass through untouched, got %s", rw.body.String())
+	}
+}
+
+func TestDevToolsDoesNotRewriteNonJSONEndpoints(t *testing.T) {
+	const body = `{"webSocketDebuggerUrl":"ws://127.0.0.1:9222/devtools/browser/guid"}`
+
+	port, _, shutdown := startBrowserRecorder(t, debugModeBrowserWith("/json/protocol", body))
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/protocol", "json/protocol"))
+
+	if !strings.Contains(rw.body.String(), "127.0.0.1:9222") {
+		t.Fatalf("expected /json/protocol to pass through untouched, got %s", rw.body.String())
+	}
+}
+
+func TestDevToolsMalformedBodyPassesThrough(t *testing.T) {
+	port, _, shutdown := startBrowserRecorder(t, debugModeBrowserWith("/json/list", "{not json"))
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/list", "json/list"))
+
+	if rw.body.String() != "{not json" {
+		t.Fatalf("expected the malformed body to pass through, got %s", rw.body.String())
+	}
+}
+
+func TestDevToolsTruncatedBodyIsAnError(t *testing.T) {
+	port, _, shutdown := startBrowserRecorder(t, func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\n\r\n{\"a\":1}"))
+	})
+	defer shutdown()
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/list", "json/list"))
+
+	if rw.status != http.StatusBadGateway {
+		t.Fatalf("expected status 502 on a truncated body, got %d", rw.status)
+	}
+}
+
+func TestDevToolsHTTPTouchesIdleTimer(t *testing.T) {
+	port, _, shutdown := startBrowserRecorder(t, debugModeBrowser)
+	defer shutdown()
+
+	var timedOut atomic.Bool
+	st := store.NewDefaultStore[string]()
+	svc := NewService(ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          port,
+		SessionCreateTimeout: time.Second,
+	}, st, session.NewManager(300*time.Millisecond, func(string) { timedOut.Store(true) }), &fakeBroadcaster{})
+
+	for range 4 {
+		rw := httptestRecorder()
+		svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/list", "json/list"))
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if timedOut.Load() {
+		t.Fatal("idle timer fired while devtools http requests were still arriving")
+	}
+}
+
+func TestDevToolsHTTPWaitsForBrowserPort(t *testing.T) {
+	port := deadPort(t)
+
+	svc, _ := newDevtoolsService(t, port, nil)
+
+	started := make(chan func(), 1)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_, _, shutdown := startBrowserRecorderOn(t, port, debugModeBrowser)
+		started <- shutdown
+	}()
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/version", "json/version"))
+
+	shutdown := <-started
+	defer shutdown()
+
+	if rw.status != http.StatusOK {
+		t.Fatalf("expected the request to wait for the browser port, got status %d", rw.status)
+	}
+}
+
+func TestDevToolsHTTPUnreachableBrowser(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	svc := NewService(ServiceConfig{
+		IPUUID:               "fake",
+		BrowserPort:          deadPort(t),
+		SessionCreateTimeout: 200 * time.Millisecond,
+	}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
+
+	rw := httptestRecorder()
+	svc.DevToolsProxy(rw, devtoolsRequest(http.MethodGet, "/devtools/session/fake/json/version", "json/version"))
+
+	if rw.status != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d", rw.status)
+	}
+}
+
+func deadPort(t *testing.T) string {
 	t.Helper()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1559,13 +1977,175 @@ func startBrowserQueryRecorder(t *testing.T) (string, <-chan *url.URL, func()) {
 		t.Fatalf("failed to listen on local port: %v", err)
 	}
 
-	captured := make(chan *url.URL, 4)
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	if err := listener.Close(); err != nil {
+		t.Fatalf("failed to close listener: %v", err)
+	}
+
+	return port
+}
+
+func echoWebSocket(w http.ResponseWriter, r *http.Request) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	for {
+		msgType, payload, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		if err := conn.WriteMessage(msgType, payload); err != nil {
+			return
+		}
+	}
+}
+
+func runDevtoolsSocket(t *testing.T, svc *Service, req *http.Request) {
+	t.Helper()
+
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = clientConn.Close() })
+	t.Cleanup(func() { _ = serverConn.Close() })
+
+	rw := &hijackResponseWriter{conn: serverConn, header: make(http.Header)}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.DevToolsProxy(rw, req)
+	}()
+
+	if err := readHTTPResponse(clientConn); err != nil {
+		t.Fatalf("failed to read upgrade response: %v", err)
+	}
+	if err := writeMaskedFrame(clientConn, 0x2, []byte("ping")); err != nil {
+		t.Fatalf("failed to write websocket frame: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	_ = clientConn.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the devtools socket proxy to exit")
+	}
+}
+
+func TestDevToolsWebSocketIsForwardedAsIs(t *testing.T) {
+	tests := []struct {
+		name string
+		rest string
+		want string
+	}{
+		{name: "root socket", rest: "", want: "/"},
+		{name: "browser socket", rest: "devtools/browser/guid", want: "/devtools/browser/guid"},
+		{name: "page socket", rest: "devtools/page/AB12", want: "/devtools/page/AB12"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			port, captured, shutdown := startBrowserRecorder(t, echoWebSocket)
+			defer shutdown()
+
+			svc, _ := newDevtoolsService(t, port, nil)
+
+			req := devtoolsWSRequest("/devtools/session/fake/"+tt.rest, tt.rest)
+			req.Host = "selenosis.example.com"
+			runDevtoolsSocket(t, svc, req)
+
+			var upstreams []*http.Request
+		drain:
+			for {
+				select {
+				case upstream := <-captured:
+					upstreams = append(upstreams, upstream)
+				case <-time.After(300 * time.Millisecond):
+					break drain
+				}
+			}
+
+			if len(upstreams) != 1 {
+				t.Fatalf("expected exactly one request to reach the browser, got %d", len(upstreams))
+			}
+
+			upstream := upstreams[0]
+			if !strings.EqualFold(upstream.Header.Get("Upgrade"), "websocket") {
+				t.Fatalf("expected the only browser request to be a websocket upgrade, got %q", upstream.Header.Get("Upgrade"))
+			}
+			if upstream.URL.Path != tt.want {
+				t.Fatalf("browser path = %q, want %q", upstream.URL.Path, tt.want)
+			}
+			if want := net.JoinHostPort(loopbackAddr, port); upstream.Host != want {
+				t.Fatalf("Host header = %q, want %q", upstream.Host, want)
+			}
+		})
+	}
+}
+
+func TestDevToolsSocketOwnership(t *testing.T) {
+	tests := []struct {
+		name       string
+		rest       string
+		wantDelete bool
+	}{
+		{name: "page socket does not own the session", rest: "devtools/page/AB12", wantDelete: false},
+		{name: "root socket owns the session", rest: "", wantDelete: true},
+		{name: "browser socket owns the session", rest: "devtools/browser/guid", wantDelete: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			port, _, shutdown := startWebSocketEchoServer(t)
+			defer shutdown()
+
+			rec := &fakeBroadcaster{}
+			svc, _ := newDevtoolsService(t, port, rec)
+
+			runDevtoolsSocket(t, svc, devtoolsWSRequest("/devtools/session/fake/"+tt.rest, tt.rest))
+
+			timeout := 500 * time.Millisecond
+			if tt.wantDelete {
+				timeout = 4 * time.Second
+			}
+
+			if got := waitForEventType(rec, EventTypeDeleted, timeout); got != tt.wantDelete {
+				t.Fatalf("delete event = %v, want %v", got, tt.wantDelete)
+			}
+		})
+	}
+}
+
+func startBrowserRecorder(t *testing.T, respond http.HandlerFunc) (string, <-chan *http.Request, func()) {
+	t.Helper()
+
+	return startBrowserRecorderOn(t, "0", respond)
+}
+
+func startBrowserRecorderOn(t *testing.T, port string, respond http.HandlerFunc) (string, <-chan *http.Request, func()) {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", net.JoinHostPort(loopbackAddr, port))
+	if err != nil {
+		t.Fatalf("failed to listen on local port %s: %v", port, err)
+	}
+
+	captured := make(chan *http.Request, 8)
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		target := *r.URL
 		select {
-		case captured <- &target:
+		case captured <- r.Clone(context.Background()):
 		default:
 		}
+
+		if respond != nil {
+			respond(w, r)
+			return
+		}
+
 		w.WriteHeader(http.StatusBadRequest)
 	})}
 
@@ -1583,14 +2163,14 @@ func startBrowserQueryRecorder(t *testing.T) (string, <-chan *url.URL, func()) {
 		<-done
 	}
 
-	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
-	return port, captured, shutdown
+	boundPort := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	return boundPort, captured, shutdown
 }
 
 func browserUpstreamURL(t *testing.T, target string) *url.URL {
 	t.Helper()
 
-	port, captured, shutdown := startBrowserQueryRecorder(t)
+	port, captured, shutdown := startBrowserRecorder(t, nil)
 	defer shutdown()
 
 	st := store.NewDefaultStore[string]()
@@ -1600,11 +2180,11 @@ func browserUpstreamURL(t *testing.T, target string) *url.URL {
 	}, st, session.NewManager(time.Second, nil), &fakeBroadcaster{})
 
 	rw := httptestRecorder()
-	svc.ProxyPlaywright(rw, newRequestWithParams(http.MethodGet, target, nil, nil, ""))
+	svc.PlaywrightConnect(rw, newRequestWithParams(http.MethodGet, target, nil, map[string]string{"ipuuid": "fake"}, ""))
 
 	select {
 	case upstream := <-captured:
-		return upstream
+		return upstream.URL
 	case <-time.After(2 * time.Second):
 		t.Fatal("browser was never called")
 		return nil
@@ -1612,7 +2192,7 @@ func browserUpstreamURL(t *testing.T, target string) *url.URL {
 }
 
 func TestProxyPlaywrightForwardsQueryToBrowser(t *testing.T) {
-	upstream := browserUpstreamURL(t, "/playwright?ipuuid=fake&headless=false&timeout=30000")
+	upstream := browserUpstreamURL(t, "/playwright/fake?headless=false&timeout=30000")
 
 	if upstream.Path != "/" {
 		t.Fatalf("unexpected browser path: %q", upstream.Path)
@@ -1625,21 +2205,18 @@ func TestProxyPlaywrightForwardsQueryToBrowser(t *testing.T) {
 	if q.Get("timeout") != "30000" {
 		t.Fatalf("expected timeout=30000 to reach the browser, got %q", q.Get("timeout"))
 	}
-	if _, ok := q["ipuuid"]; ok {
-		t.Fatal("expected ipuuid to be stripped")
+}
+
+func TestProxyPlaywrightPreservesRawQuery(t *testing.T) {
+	upstream := browserUpstreamURL(t, "/playwright/fake?b=2&a=1&https://example.com")
+
+	if upstream.RawQuery != "b=2&a=1&https://example.com" {
+		t.Fatalf("expected the raw query to reach the browser untouched, got %q", upstream.RawQuery)
 	}
 }
 
-func TestProxyPlaywrightStripsEveryIPUUIDValue(t *testing.T) {
-	upstream := browserUpstreamURL(t, "/playwright?ipuuid=fake&ipuuid=other&headless=false")
-
-	if got := upstream.Query()["ipuuid"]; len(got) != 0 {
-		t.Fatalf("expected no ipuuid values, got %#v", got)
-	}
-}
-
-func TestProxyPlaywrightSendsEmptyQueryWhenOnlyIPUUID(t *testing.T) {
-	upstream := browserUpstreamURL(t, "/playwright?ipuuid=fake")
+func TestProxyPlaywrightSendsEmptyQueryWhenClientQueryEmpty(t *testing.T) {
+	upstream := browserUpstreamURL(t, "/playwright/fake")
 
 	if upstream.RawQuery != "" {
 		t.Fatalf("expected empty raw query, got %q", upstream.RawQuery)
@@ -1647,7 +2224,7 @@ func TestProxyPlaywrightSendsEmptyQueryWhenOnlyIPUUID(t *testing.T) {
 }
 
 func TestProxyPlaywrightPreservesRepeatedAndEncodedValues(t *testing.T) {
-	upstream := browserUpstreamURL(t, "/playwright?ipuuid=fake&args=--no-sandbox&args=--disable-gpu&note=a+b%26c")
+	upstream := browserUpstreamURL(t, "/playwright/fake?args=--no-sandbox&args=--disable-gpu&note=a+b%26c")
 
 	q := upstream.Query()
 	args := q["args"]
@@ -2118,7 +2695,7 @@ func TestCreateSessionBodyReadError(t *testing.T) {
 	req := newRequestWithParams(http.MethodPost, "/session", io.NopCloser(errorReader{}), nil, "")
 	rw := httptestRecorder()
 
-	svc.CreateSession(rw, req)
+	svc.WebDriverNewSession(rw, req)
 
 	if rw.status != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rw.status)
@@ -2132,7 +2709,7 @@ func TestCreateSessionInvalidRequestBody(t *testing.T) {
 	req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString("{invalid"), nil, "")
 	rw := httptestRecorder()
 
-	svc.CreateSession(rw, req)
+	svc.WebDriverNewSession(rw, req)
 
 	if rw.status != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rw.status)
@@ -2156,7 +2733,7 @@ func TestProxySessionResponseBodyNilInModifier(t *testing.T) {
 
 	req := newRequestWithParams(http.MethodGet, "/session/fake/url", nil, map[string]string{"sessionId": "fake"}, "")
 	rw := httptestRecorder()
-	svc.ProxySession(rw, req)
+	svc.WebDriverProxy(rw, req)
 }
 
 func TestRouteVNCNormalClose(t *testing.T) {
@@ -2238,4 +2815,46 @@ func TestWaitDistinguishesCallerCancelFromTimeout(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+}
+
+func TestDevToolsRoutesMatchCreateAndAttach(t *testing.T) {
+	var gotIPUUID, gotTail string
+	var hits int
+	record := func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		gotIPUUID = chi.URLParam(r, "ipuuid")
+		gotTail = chi.URLParam(r, "*")
+	}
+
+	router := chi.NewRouter()
+	router.HandleFunc("/devtools/{ipuuid}", record)
+	router.HandleFunc("/devtools/{ipuuid}/*", record)
+	router.HandleFunc("/devtools/session/{ipuuid}", record)
+	router.HandleFunc("/devtools/session/{ipuuid}/*", record)
+
+	tests := []struct {
+		path   string
+		ipuuid string
+		tail   string
+	}{
+		{path: "/devtools/abc", ipuuid: "abc"},
+		{path: "/devtools/abc/json/version", ipuuid: "abc", tail: "json/version"},
+		{path: "/devtools/session/abc", ipuuid: "abc"},
+		{path: "/devtools/session/abc/devtools/browser/guid", ipuuid: "abc", tail: "devtools/browser/guid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			hits, gotIPUUID, gotTail = 0, "", ""
+			rw := httptestRecorder()
+			router.ServeHTTP(rw, newRequestWithParams(http.MethodGet, tt.path, nil, nil, ""))
+
+			if hits != 1 {
+				t.Fatalf("expected the route to match, status %d", rw.status)
+			}
+			if gotIPUUID != tt.ipuuid || gotTail != tt.tail {
+				t.Fatalf("params = ipuuid %q tail %q, want %q %q", gotIPUUID, gotTail, tt.ipuuid, tt.tail)
+			}
+		})
+	}
 }
