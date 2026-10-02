@@ -60,12 +60,17 @@ func main() {
 		broadcaster.Broadcast(sessionCreateTimeout())
 	})
 
-	router.With(createTimeoutMiddleWare).Post("/session", svc.CreateSession)
+	router.With(createTimeoutMiddleWare).Post("/session", svc.WebDriverNewSession)
 	router.Route("/session/{sessionId}", func(r chi.Router) {
-		r.HandleFunc("/*", svc.ProxySession)
+		r.HandleFunc("/*", svc.WebDriverProxy)
 	})
 
-	router.With(createTimeoutMiddleWare).Get("/playwright", svc.ProxyPlaywright)
+	router.With(createTimeoutMiddleWare).Get("/playwright/{ipuuid}", svc.PlaywrightConnect)
+
+	router.With(createTimeoutMiddleWare).HandleFunc("/devtools/{ipuuid}", svc.DevToolsProxy)
+	router.With(createTimeoutMiddleWare).HandleFunc("/devtools/{ipuuid}/*", svc.DevToolsProxy)
+	router.With(createTimeoutMiddleWare).HandleFunc("/devtools/session/{ipuuid}", svc.DevToolsProxy)
+	router.With(createTimeoutMiddleWare).HandleFunc("/devtools/session/{ipuuid}/*", svc.DevToolsProxy)
 
 	router.With(createTimeoutMiddleWare).Post("/mcp", svc.ProxyMcp)
 	router.With(createTimeoutMiddleWare).Get("/mcp", svc.ProxyMcp)

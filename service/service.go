@@ -20,6 +20,7 @@ import (
 	"github.com/alcounit/seleniferous/v2/pkg/pathutils"
 	"github.com/alcounit/seleniferous/v2/pkg/session"
 	"github.com/alcounit/seleniferous/v2/pkg/store"
+	"github.com/alcounit/selenosis/v2/pkg/devtools"
 	"github.com/alcounit/selenosis/v2/pkg/jsonrpc"
 	"github.com/alcounit/selenosis/v2/pkg/proxy"
 	"github.com/alcounit/selenosis/v2/pkg/proxy/rule"
@@ -54,6 +55,8 @@ var (
 	waitAttemptCutoff = 5 * time.Second
 )
 
+const maxDevtoolsBodySize = 1 << 20
+
 type ServiceConfig struct {
 	IPUUID               string
 	BrowserPort          string
@@ -77,7 +80,7 @@ func NewService(config ServiceConfig, store store.Store[string], mgr *session.Ma
 	}
 }
 
-func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
+func (s *Service) WebDriverNewSession(rw http.ResponseWriter, req *http.Request) {
 	log := logctx.FromContext(req.Context())
 
 	if s.store.Len() > 0 {
@@ -226,7 +229,7 @@ func (s *Service) CreateSession(rw http.ResponseWriter, req *http.Request) {
 	rp.ServeHTTP(rw, req)
 }
 
-func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
+func (s *Service) WebDriverProxy(rw http.ResponseWriter, req *http.Request) {
 	log := logctx.FromContext(req.Context())
 
 	requestSessionId := chi.URLParam(req, "sessionId")
@@ -371,10 +374,10 @@ func (s *Service) ProxySession(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
+func (s *Service) PlaywrightConnect(rw http.ResponseWriter, req *http.Request) {
 	log := logctx.FromContext(req.Context())
 
-	ipUUID := req.URL.Query().Get("ipuuid")
+	ipUUID := chi.URLParam(req, "ipuuid")
 	if ipUUID == "" {
 		log.Error().Msg("missing required url param: ipuuid")
 		http.Error(rw, "missing ipuuid", http.StatusBadRequest)
@@ -394,16 +397,12 @@ func (s *Service) ProxyPlaywright(rw http.ResponseWriter, req *http.Request) {
 
 	log.Info().Str("sessionId", ipUUID).Msg("playwright proxy request")
 
-	query := req.URL.Query()
-	query.Del("ipuuid")
-	rawQuery := query.Encode()
-
 	resolver := func(r *http.Request) (*url.URL, error) {
 		return &url.URL{
 			Scheme:   "ws",
 			Host:     net.JoinHostPort(loopbackAddr, s.config.BrowserPort),
 			Path:     "/",
-			RawQuery: rawQuery,
+			RawQuery: req.URL.RawQuery,
 		}, nil
 	}
 
@@ -547,6 +546,7 @@ func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	rp := proxy.NewHTTPReverseProxy(
+		proxy.WithHTTPDialRetry(proxy.DialRetry{Timeout: s.config.SessionCreateTimeout}),
 		proxy.WithRequestModifier(reqModifier),
 		proxy.WithResponseModifier(respModifier),
 		proxy.WithErrorHandler(mcpErrorHandler),
@@ -557,6 +557,141 @@ func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
 		notifyDelete(s.broadcaster, "delete browser")
 		log.Info().Str("sessionId", sessionId).Msg("mcp session deleted")
 	}
+}
+
+func (s *Service) DevToolsProxy(rw http.ResponseWriter, req *http.Request) {
+	log := logctx.FromContext(req.Context())
+
+	ipUUID := chi.URLParam(req, "ipuuid")
+	if ipUUID == "" {
+		log.Error().Msg("missing required url param: ipuuid")
+		http.Error(rw, "missing required url param: ipuuid", http.StatusBadRequest)
+		return
+	}
+
+	if ipUUID != s.config.IPUUID {
+		log.Err(errSessionNotFound).Str("sessionId", ipUUID).Msg("unknown ipuuid")
+		http.Error(rw, "unknown ipuuid", http.StatusBadRequest)
+		return
+	}
+
+	if _, ok := s.store.Get(ipUUID); !ok {
+		s.storeSessionId(ipUUID)
+	}
+
+	s.manager.Touch(ipUUID)
+
+	browserAddr := net.JoinHostPort(loopbackAddr, s.config.BrowserPort)
+	browserPath := path.Join("/", chi.URLParam(req, "*"))
+
+	if !proxy.IsWebSocketRequest(req) {
+		s.proxyDevtoolsHTTP(rw, req, ipUUID, browserAddr, browserPath, req.URL.RawQuery)
+		return
+	}
+
+	target := &url.URL{
+		Scheme:   "ws",
+		Host:     browserAddr,
+		Path:     browserPath,
+		RawQuery: req.URL.RawQuery,
+	}
+
+	resolver := func(r *http.Request) (*url.URL, error) {
+		log.Info().Str("ws_url", target.String()).Msg("resolved websocket target url")
+		return target, nil
+	}
+
+	onConnect := proxy.WithOnConnect(func() {
+		s.manager.Touch(ipUUID)
+		log.Info().Str("sessionId", ipUUID).Msg("ws connection established")
+	})
+
+	onMessage := proxy.WithOnMessage(func() {
+		s.manager.Touch(ipUUID)
+		log.Debug().Str("sessionId", ipUUID).Msg("ws message received")
+	})
+
+	var isSessionClosed bool
+	onClose := proxy.WithOnClose(func() {
+		isSessionClosed = true
+		s.manager.Touch(ipUUID)
+		log.Info().Str("sessionId", ipUUID).Msg("ws connection closed")
+	})
+
+	retryDialer := proxy.WithWSDialRetry(proxy.DialRetry{Timeout: s.config.SessionCreateTimeout})
+	rp := proxy.NewWebSocketReverseProxy(resolver, onConnect, onMessage, onClose, retryDialer)
+	rp.ServeHTTP(rw, req)
+
+	if isSessionClosed && devtools.IsBrowserSocket(browserPath) {
+		notifyDelete(s.broadcaster, "delete browser")
+	}
+}
+
+func (s *Service) proxyDevtoolsHTTP(rw http.ResponseWriter, req *http.Request, ipUUID, browserAddr, browserPath, rawQuery string) {
+	log := logctx.FromContext(req.Context())
+
+	reqModifier := func(r *http.Request) {
+		r.URL = &url.URL{
+			Scheme:   "http",
+			Host:     browserAddr,
+			Path:     browserPath,
+			RawQuery: rawQuery,
+		}
+		r.Method = req.Method
+		r.Host = browserAddr
+
+		log.Info().Str("browserPath", browserPath).Msg("devtools http request modified")
+	}
+
+	external, externalPresent := externalBaseURLFromHeaders(req.Header)
+
+	respModifier := func(r *http.Response) error {
+		s.manager.Touch(ipUUID)
+
+		if !externalPresent || !devtools.RewritesBody(browserPath) {
+			return nil
+		}
+
+		if r.StatusCode != http.StatusOK || r.Body == nil {
+			return nil
+		}
+
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxDevtoolsBodySize))
+		r.Body.Close()
+		if err != nil {
+			log.Err(err).Msg("failed to read devtools response body")
+			return err
+		}
+
+		rewritten, err := devtools.Rewrite(body, external, ipUUID)
+		if err != nil {
+			log.Err(err).Msg("failed to rewrite devtools response body, passing it through")
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			return nil
+		}
+
+		r.Body = io.NopCloser(bytes.NewReader(rewritten))
+		r.ContentLength = int64(len(rewritten))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Del("Content-Length")
+
+		log.Info().Str("browserPath", browserPath).Msg("devtools response body rewritten")
+
+		return nil
+	}
+
+	errorHandler := func(w http.ResponseWriter, r *http.Request, err error) {
+		log.Err(err).Str("browserPath", browserPath).Msg("devtools proxy error")
+		w.WriteHeader(http.StatusBadGateway)
+	}
+
+	rp := proxy.NewHTTPReverseProxy(
+		proxy.WithHTTPDialRetry(proxy.DialRetry{Timeout: s.config.SessionCreateTimeout}),
+		proxy.WithRequestModifier(reqModifier),
+		proxy.WithResponseModifier(respModifier),
+		proxy.WithErrorHandler(errorHandler),
+	)
+	rp.ServeHTTP(rw, req)
 }
 
 func (s *Service) RouteHTTP(rw http.ResponseWriter, req *http.Request) {

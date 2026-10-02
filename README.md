@@ -64,7 +64,8 @@ real upstream session id (the browser's WebDriver session id, or the MCP session
 stable, pod-derived id on the way out, and maps it back on the way in. Because the id
 *encodes the pod*, selenosis can route any later request straight to the right pod by
 decoding it — there is no session registry anywhere. The same scheme carries the id in the
-WebDriver `sessionId` for Selenium/Playwright and in the `Mcp-Session-Id` header for MCP.
+WebDriver `sessionId` for Selenium/Playwright, in the `Mcp-Session-Id` header for MCP, and in
+the URL path (`/devtools/session/{IPUUID}`) for DevTools.
 
 ---
 
@@ -75,7 +76,7 @@ seleniferous is configured via environment variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `LISTEN_ADDR` | `:4445` | HTTP listen address. |
-| `BROWSER_PORT` | `4444` | Local browser port inside the pod. |
+| `BROWSER_PORT` | `4444` | Local browser port inside the pod — the WebDriver / Playwright / MCP server, or the CDP port for DevTools images (e.g. `9222` for `chromedp/headless-shell`). |
 | `SESSION_CREATE_TIMEOUT` | `1m` | How long to wait for the browser to start answering before giving up on a create. |
 | `SESSION_IDLE_TIMEOUT` | `5m` | Max time to wait for the first request, then max idle time after session creation. |
 | `ROUTING_RULES` | empty | Rules for the internal HTTP proxy (see below). |
@@ -100,7 +101,9 @@ selenosis.
 | --- | --- | --- |
 | `POST` | `/session` | Create a new WebDriver session (proxied to the local browser). |
 | `*` | `/session/{sessionId}/*` | Proxy all session traffic (HTTP and WebSocket). |
-| `WS` | `/playwright` | Proxy Playwright WebSocket traffic. |
+| `WS` | `/playwright/{ipuuid}` | Proxy Playwright WebSocket traffic. |
+| `WS`, `*` | `/devtools/{ipuuid}[/*]` | DevTools create path — forwarded by the hub from `/devtools/{name}/{version}`. |
+| `WS`, `*` | `/devtools/session/{ipuuid}[/*]` | DevTools attach path — forwarded by the hub from `/devtools/session/{sessionId}`. |
 | `POST` | `/mcp` | MCP Streamable HTTP — client requests (proxied to the local browser `/mcp`). |
 | `GET` | `/mcp` | MCP Streamable HTTP — server-initiated stream. |
 | `DELETE` | `/mcp` | Terminate the MCP session and schedule pod teardown. |
@@ -208,6 +211,37 @@ Error responses follow JSON-RPC 2.0, so a spec-compliant client reacts correctly
 Request and response **bodies** are forwarded unchanged; only the `Mcp-Session-Id` header
 is rewritten. Each MCP request resets the idle timeout, exactly like Selenium and
 Playwright traffic.
+
+</details>
+
+---
+
+## DevTools (CDP)
+
+For CDP-only images (no WebDriver inside) seleniferous proxies Chrome DevTools Protocol
+traffic to the browser on `BROWSER_PORT`. The hub forwards both new and existing DevTools
+sessions here; seleniferous does not start the browser and never sends it a request the
+client did not send.
+
+<details>
+<summary><b>Routing, URL rewriting, and lifecycle</b></summary>
+
+- **Routes** — `/devtools/{ipuuid}[/*]` (session create) and `/devtools/session/{ipuuid}[/*]`
+  (existing session). `{ipuuid}` must equal the pod-derived `IPUUID`, otherwise `400`.
+- **Protocol and path** — the request goes to the browser over the protocol it arrived on
+  (HTTP or WebSocket). The routing prefix is stripped; the rest of the path and the query reach
+  the browser unchanged (`/devtools/session/{ipuuid}/json/list` → `/json/list`).
+- **Host header** — always `127.0.0.1:BROWSER_PORT`. Chrome rejects debugging requests whose
+  `Host` is a hostname other than `localhost` or an IP.
+- **Readiness** — only connection-refused dials are retried, within `SESSION_CREATE_TIMEOUT`. No
+  HTTP probe is sent, because some launchers start the browser on the first request of any kind.
+- **URL rewriting** — for `/json/version`, `/json`, `/json/list` and `/json/new`,
+  `webSocketDebuggerUrl` and `devtoolsFrontendUrl` are rewritten to
+  `ws(s)://<external host>/devtools/session/{ipuuid}/<original path>`. The external host comes
+  from the hub's `X-Selenosis-External-URL` header. Empty or non-JSON bodies pass through untouched.
+- **Lifecycle** — every WebSocket frame and HTTP response resets the idle timeout. Closing a
+  browser-level socket (`/` or `/devtools/browser/*`) schedules pod teardown; closing a page
+  socket does not.
 
 </details>
 
