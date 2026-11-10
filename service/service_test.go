@@ -2858,3 +2858,207 @@ func TestDevToolsRoutesMatchCreateAndAttach(t *testing.T) {
 		})
 	}
 }
+
+func TestWebDriverProxyLongCommandSuspendsIdle(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+
+	var timedOut atomic.Bool
+	mgr := session.NewManager(50*time.Millisecond, func(string) { timedOut.Store(true) })
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, mgr, &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		time.Sleep(150 * time.Millisecond)
+		return response(http.StatusOK, `{"value":null}`), nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/session/fake/url", bytes.NewBufferString(`{}`), map[string]string{"sessionId": "fake"}, "")
+		svc.WebDriverProxy(httptestRecorder(), req)
+	})
+
+	if timedOut.Load() {
+		t.Fatal("idle timer fired while webdriver command was in flight")
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	if timedOut.Load() {
+		t.Fatal("idle timer must count from the end of the command")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if !timedOut.Load() {
+		t.Fatal("idle timer did not fire after the command finished")
+	}
+}
+
+func TestWebDriverNewSessionSuspendsIdle(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+
+	var timedOut atomic.Bool
+	mgr := session.NewManager(50*time.Millisecond, func(string) { timedOut.Store(true) })
+	cfg := ServiceConfig{IPUUID: "fake", BrowserPort: "4444", SessionCreateTimeout: time.Second}
+	svc := NewService(cfg, st, mgr, &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodHead {
+			return response(http.StatusOK, ""), nil
+		}
+		time.Sleep(150 * time.Millisecond)
+		return response(http.StatusOK, `{"value":{"sessionId":"orig","capabilities":{}}}`), nil
+	})
+
+	withDefaultTransports(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/session", bytes.NewBufferString(`{"capabilities":{}}`), nil, "")
+		svc.WebDriverNewSession(httptestRecorder(), req)
+	})
+
+	if timedOut.Load() {
+		t.Fatal("idle timer fired while session create was in flight")
+	}
+	mgr.Stop("fake")
+}
+
+func TestProxyMcpPostSuspendsIdle(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+
+	var timedOut atomic.Bool
+	mgr := session.NewManager(50*time.Millisecond, func(string) { timedOut.Store(true) })
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, mgr, &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		time.Sleep(150 * time.Millisecond)
+		return response(http.StatusOK, `{"jsonrpc":"2.0","id":2,"result":{}}`), nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodPost, "/mcp", bytes.NewBufferString(`{"jsonrpc":"2.0","id":2,"method":"tools/call"}`), nil, "")
+		req.Header.Set("Mcp-Session-Id", "fake")
+		svc.ProxyMcp(httptestRecorder(), req)
+	})
+
+	if timedOut.Load() {
+		t.Fatal("idle timer fired while mcp tool call was in flight")
+	}
+	mgr.Stop("fake")
+}
+
+func TestProxyMcpGetDoesNotSuspendIdle(t *testing.T) {
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+
+	var timedOut atomic.Bool
+	mgr := session.NewManager(50*time.Millisecond, func(string) { timedOut.Store(true) })
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, st, mgr, &fakeBroadcaster{})
+
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		time.Sleep(150 * time.Millisecond)
+		return response(http.StatusOK, "{}"), nil
+	})
+
+	withProxyTransport(t, rt, func() {
+		req := newRequestWithParams(http.MethodGet, "/mcp", nil, nil, "")
+		req.Header.Set("Mcp-Session-Id", "fake")
+		svc.ProxyMcp(httptestRecorder(), req)
+	})
+
+	if !timedOut.Load() {
+		t.Fatal("expected mcp sse stream not to hold the idle timer")
+	}
+}
+
+func TestRejectedRequestsKeepStartTimer(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(svc *Service)
+	}{
+		{
+			name: "playwright unknown ipuuid",
+			call: func(svc *Service) {
+				svc.PlaywrightConnect(httptestRecorder(), newRequestWithParams(http.MethodGet, "/playwright/other", nil, map[string]string{"ipuuid": "other"}, ""))
+			},
+		},
+		{
+			name: "devtools unknown ipuuid",
+			call: func(svc *Service) {
+				svc.DevToolsProxy(httptestRecorder(), newRequestWithParams(http.MethodGet, "/devtools/other/json", nil, map[string]string{"ipuuid": "other"}, ""))
+			},
+		},
+		{
+			name: "mcp get without session",
+			call: func(svc *Service) {
+				svc.ProxyMcp(httptestRecorder(), newRequestWithParams(http.MethodGet, "/mcp", nil, nil, ""))
+			},
+		},
+		{
+			name: "webdriver unknown session",
+			call: func(svc *Service) {
+				svc.WebDriverProxy(httptestRecorder(), newRequestWithParams(http.MethodGet, "/session/other/url", nil, map[string]string{"sessionId": "other"}, ""))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expired := make(chan struct{}, 1)
+			mgr := session.NewManager(time.Hour, nil)
+			mgr.StartTimer(50*time.Millisecond, func() { expired <- struct{}{} })
+
+			svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: "4444"}, store.NewDefaultStore[string](), mgr, &fakeBroadcaster{})
+			tt.call(svc)
+
+			select {
+			case <-expired:
+			case <-time.After(500 * time.Millisecond):
+				t.Fatal("rejected request disarmed the start timer")
+			}
+		})
+	}
+}
+
+func TestProxySessionWebSocketDoesNotSuspendIdle(t *testing.T) {
+	port, _, shutdown := startWebSocketEchoServer(t)
+	defer shutdown()
+
+	st := store.NewDefaultStore[string]()
+	st.Set("fake", "orig")
+
+	var timedOut atomic.Bool
+	mgr := session.NewManager(50*time.Millisecond, func(string) { timedOut.Store(true) })
+	svc := NewService(ServiceConfig{IPUUID: "fake", BrowserPort: port}, st, mgr, &fakeBroadcaster{})
+
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() { _ = clientConn.Close() })
+	t.Cleanup(func() { _ = serverConn.Close() })
+
+	req := newRequestWithParams(http.MethodGet, "/session/fake/ws", nil, map[string]string{"sessionId": "fake"}, "")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	rw := &hijackResponseWriter{conn: serverConn, header: make(http.Header)}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.WebDriverProxy(rw, req)
+	}()
+
+	if err := readHTTPResponse(clientConn); err != nil {
+		t.Fatalf("failed to read upgrade response: %v", err)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if !timedOut.Load() {
+		t.Fatal("expected a silent websocket not to hold the idle timer")
+	}
+
+	_ = clientConn.Close()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for websocket proxy to exit")
+	}
+}

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -43,6 +42,9 @@ func main() {
 		log.Info().Str("sessionId", sessionId).Msg("session timed out")
 	})
 	defer mgr.Stop(cfg.IPUUID)
+	mgr.StartTimer(cfg.SessionCreateTimeout, func() {
+		broadcaster.Broadcast(sessionCreateTimeout())
+	})
 
 	store := store.NewDefaultStore[string]()
 	svc := service.NewService(cfg, store, mgr, broadcaster)
@@ -56,25 +58,21 @@ func main() {
 	router := chi.NewRouter()
 	router.Use(requestContextMiddleware(log, hostname))
 
-	createTimeoutMiddleWare := waitFirstRequest(cfg.SessionCreateTimeout, func() {
-		broadcaster.Broadcast(sessionCreateTimeout())
-	})
-
-	router.With(createTimeoutMiddleWare).Post("/session", svc.WebDriverNewSession)
+	router.Post("/session", svc.WebDriverNewSession)
 	router.Route("/session/{sessionId}", func(r chi.Router) {
 		r.HandleFunc("/*", svc.WebDriverProxy)
 	})
 
-	router.With(createTimeoutMiddleWare).Get("/playwright/{ipuuid}", svc.PlaywrightConnect)
+	router.Get("/playwright/{ipuuid}", svc.PlaywrightConnect)
 
-	router.With(createTimeoutMiddleWare).HandleFunc("/devtools/{ipuuid}", svc.DevToolsProxy)
-	router.With(createTimeoutMiddleWare).HandleFunc("/devtools/{ipuuid}/*", svc.DevToolsProxy)
-	router.With(createTimeoutMiddleWare).HandleFunc("/devtools/session/{ipuuid}", svc.DevToolsProxy)
-	router.With(createTimeoutMiddleWare).HandleFunc("/devtools/session/{ipuuid}/*", svc.DevToolsProxy)
+	router.HandleFunc("/devtools/{ipuuid}", svc.DevToolsProxy)
+	router.HandleFunc("/devtools/{ipuuid}/*", svc.DevToolsProxy)
+	router.HandleFunc("/devtools/session/{ipuuid}", svc.DevToolsProxy)
+	router.HandleFunc("/devtools/session/{ipuuid}/*", svc.DevToolsProxy)
 
-	router.With(createTimeoutMiddleWare).Post("/mcp", svc.ProxyMcp)
-	router.With(createTimeoutMiddleWare).Get("/mcp", svc.ProxyMcp)
-	router.With(createTimeoutMiddleWare).Delete("/mcp", svc.ProxyMcp)
+	router.Post("/mcp", svc.ProxyMcp)
+	router.Get("/mcp", svc.ProxyMcp)
+	router.Delete("/mcp", svc.ProxyMcp)
 
 	router.Route("/selenosis/v1", func(r chi.Router) {
 		r.Route("/sessions/{sessionId}/proxy", func(r chi.Router) {
@@ -207,26 +205,6 @@ func sessionIdleTimeout() service.Event {
 		Type:      service.EventTypeTimedout,
 		Data:      "session idle timeout exceeded",
 		Timestamp: time.Now(),
-	}
-}
-
-func waitFirstRequest(deadline time.Duration, onTimeout func()) func(next http.Handler) http.Handler {
-	var state int32
-
-	timer := time.AfterFunc(deadline, func() {
-		if atomic.CompareAndSwapInt32(&state, 0, 2) {
-			onTimeout()
-		}
-	})
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if atomic.CompareAndSwapInt32(&state, 0, 1) {
-				timer.Stop()
-			}
-
-			next.ServeHTTP(w, r)
-		})
 	}
 }
 
