@@ -89,7 +89,8 @@ func (s *Service) WebDriverNewSession(rw http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	s.manager.Touch(s.config.IPUUID)
+	s.manager.Begin(s.config.IPUUID)
+	defer s.manager.End(s.config.IPUUID)
 
 	if req.Body == nil {
 		log.Err(errSessionCreate).Msg("request body is nil")
@@ -240,11 +241,11 @@ func (s *Service) WebDriverProxy(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	s.manager.Touch(requestSessionId)
-
 	log.Info().Str("sessionId", requestSessionId).Msg("proxying session request")
 
 	if proxy.IsWebSocketRequest(req) {
+		s.manager.Touch(requestSessionId)
+
 		resolver := func(r *http.Request) (*url.URL, error) {
 			url := &url.URL{
 				Scheme: "ws",
@@ -277,6 +278,9 @@ func (s *Service) WebDriverProxy(rw http.ResponseWriter, req *http.Request) {
 		rp.ServeHTTP(rw, req)
 		return
 	}
+
+	s.manager.Begin(requestSessionId)
+	defer s.manager.End(requestSessionId)
 
 	// A DELETE on the session itself tears down the browser, after which this
 	// sidecar has nothing left to serve and shuts itself down.
@@ -517,7 +521,12 @@ func (s *Service) ProxyMcp(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	s.manager.Touch(s.config.IPUUID)
+	if req.Method == http.MethodPost {
+		s.manager.Begin(s.config.IPUUID)
+		defer s.manager.End(s.config.IPUUID)
+	} else {
+		s.manager.Touch(s.config.IPUUID)
+	}
 
 	log.Info().Str("sessionId", sessionId).Msg("proxying mcp request")
 
