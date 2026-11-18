@@ -81,6 +81,7 @@ seleniferous is configured via environment variables:
 | `SESSION_IDLE_TIMEOUT` | `5m` | Max time to wait for the first request, then max idle time after session creation. |
 | `ROUTING_RULES` | empty | Rules for the internal HTTP proxy (see below). |
 | `POD_IP` | auto | Pod IP used to derive the stable `sessionId` (auto-detected if absent). |
+| `LOG_LEVEL` | `info` | Log level (`trace`, `debug`, `info`, `warn`, `error`). Per-request proxy lines are logged at `debug`. |
 
 These are set per browser pod, in the sidecar's `env` inside `BrowserConfig` — the Helm
 chart does not deploy seleniferous and cannot configure it. `LISTEN_ADDR` must stay aligned

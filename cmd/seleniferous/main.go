@@ -27,7 +27,7 @@ import (
 func main() {
 
 	zerolog.TimeFieldFormat = time.RFC3339
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	zerolog.SetGlobalLevel(logLevel())
 	log := zerolog.New(os.Stdout).With().Timestamp().Logger()
 
 	cfg, listenAddr, idleTimeout, err := loadConfig()
@@ -136,6 +136,14 @@ func main() {
 		log.Warn().Err(err).Msg("graceful shutdown timed out, forcing close")
 		_ = srv.Close()
 	}
+}
+
+func logLevel() zerolog.Level {
+	level, err := zerolog.ParseLevel(env.GetEnvOrDefault("LOG_LEVEL", "info"))
+	if err != nil || level == zerolog.NoLevel {
+		return zerolog.InfoLevel
+	}
+	return level
 }
 
 func loadConfig() (service.ServiceConfig, string, time.Duration, error) {
