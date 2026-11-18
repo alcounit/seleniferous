@@ -241,7 +241,7 @@ func (s *Service) WebDriverProxy(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	log.Info().Str("sessionId", requestSessionId).Msg("proxying session request")
+	log.Debug().Str("sessionId", requestSessionId).Msg("proxying session request")
 
 	if proxy.IsWebSocketRequest(req) {
 		s.manager.Touch(requestSessionId)
@@ -330,7 +330,7 @@ func (s *Service) WebDriverProxy(rw http.ResponseWriter, req *http.Request) {
 		}
 		r.Host = r.URL.Host
 
-		log.Info().Str("sessionId", requestSessionId).Str("browserAddr", r.URL.String()).Msg("session proxy request modified")
+		log.Debug().Str("sessionId", requestSessionId).Str("browserAddr", r.URL.String()).Msg("session proxy request modified")
 	}
 
 	responseModifier := func(r *http.Response) error {
@@ -358,7 +358,7 @@ func (s *Service) WebDriverProxy(rw http.ResponseWriter, req *http.Request) {
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 
-		log.Info().Int("statusCode", r.StatusCode).Str("sessionId", originalSessionId).Msg("session proxy response modified")
+		log.Debug().Int("statusCode", r.StatusCode).Str("sessionId", originalSessionId).Msg("session proxy response modified")
 
 		return nil
 	}
